@@ -1,0 +1,6 @@
+@Remember.Server_HostAddress = http://localhost:5031
+
+GET {{Remember.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
