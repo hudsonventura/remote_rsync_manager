@@ -5,6 +5,13 @@ import { Home } from "@/pages/Home"
 import { Dashboard } from "@/pages/Dashboard"
 import { Profile } from "@/pages/Profile"
 import { Settings } from "@/pages/Settings"
+import { AgentsList } from "@/pages/AgentsList"
+import { AddAgent } from "@/pages/AddAgent"
+import { EditAgent } from "@/pages/EditAgent"
+import { AgentBackupPlans } from "@/pages/AgentBackupPlans"
+import { AddBackupPlan } from "@/pages/AddBackupPlan"
+import { BackupPlansList } from "@/pages/BackupPlansList"
+import { EditBackupPlan } from "@/pages/EditBackupPlan"
 
 function App() {
   return (
@@ -14,6 +21,14 @@ function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/agents" element={<AgentsList />} />
+          <Route path="/agents/add" element={<AddAgent />} />
+          <Route path="/agents/:id/edit" element={<EditAgent />} />
+          <Route path="/agents/:agentId/backup-plans" element={<AgentBackupPlans />} />
+          <Route path="/agents/:agentId/backup-plans/add" element={<AddBackupPlan />} />
+          <Route path="/agents/:agentId/backup-plans/:planId/edit" element={<EditBackupPlan />} />
+          <Route path="/backup-plans" element={<BackupPlansList />} />
+          <Route path="/backup-plans/:planId/edit" element={<EditBackupPlan />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
