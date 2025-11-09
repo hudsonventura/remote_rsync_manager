@@ -48,6 +48,27 @@
         "/consoleloggerparameters:NoSummary"
       ],
       "problemMatcher": "$msCompile"
+    },
+    {
+			"label": "docker compose up postgres",
+			"type": "shell",
+			"command": "docker compose up postgres -d", //docker compose up db cache -d && dotnet build
+			"problemMatcher": []
+		},
+    {
+      "label": "docker compose: down",
+      "type": "shell",
+			"command": "docker compose down", //docker compose up db cache -d && dotnet build
+			"problemMatcher": []
+    },
+    {
+      "label": "build and start postgres",
+      "dependsOn": [
+        "build",
+        "docker compose: up"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": "$msCompile"
     }
   ]
 }

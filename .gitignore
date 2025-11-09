@@ -1,2 +1,7 @@
 src/server/obj/*
 src/server/bin/*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
