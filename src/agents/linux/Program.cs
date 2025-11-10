@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Scalar.AspNetCore;
 using agent.Data;
 using agent.Models;
 
@@ -22,9 +23,103 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
+    // Standard OpenAPI endpoint
     app.MapOpenApi();
+    
+    // Custom OpenAPI endpoint with security scheme for Scalar
+    app.MapGet("/openapi-auth.json", async (HttpContext context) =>
+    {
+        // Get the OpenAPI document service
+        var openApiService = context.RequestServices.GetRequiredService<Microsoft.AspNetCore.Http.HttpContext>();
+        
+        // Fetch the standard OpenAPI document
+        var httpClient = new System.Net.Http.HttpClient();
+        var baseUrl = $"{context.Request.Scheme}://{context.Request.Host}";
+        var openApiResponse = await httpClient.GetStringAsync($"{baseUrl}/openapi/v1.json");
+        
+        // Parse JSON and add security scheme
+        var jsonDoc = System.Text.Json.JsonDocument.Parse(openApiResponse);
+        var root = jsonDoc.RootElement;
+        var writer = new System.Text.Json.Utf8JsonWriter(new System.IO.MemoryStream());
+        
+        // Create modified JSON with security scheme
+        using var stream = new System.IO.MemoryStream();
+        using var jsonWriter = new System.Text.Json.Utf8JsonWriter(stream);
+        
+        jsonWriter.WriteStartObject();
+        
+        // Copy all existing properties
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Name == "components")
+            {
+                jsonWriter.WritePropertyName("components");
+                jsonWriter.WriteStartObject();
+                
+                // Copy existing components
+                if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var compProp in prop.Value.EnumerateObject())
+                    {
+                        compProp.WriteTo(jsonWriter);
+                    }
+                }
+                
+                // Add security schemes
+                jsonWriter.WritePropertyName("securitySchemes");
+                jsonWriter.WriteStartObject();
+                jsonWriter.WritePropertyName("AgentToken");
+                jsonWriter.WriteStartObject();
+                jsonWriter.WriteString("type", "apiKey");
+                jsonWriter.WriteString("in", "header");
+                jsonWriter.WriteString("name", "X-Agent-Token");
+                jsonWriter.WriteString("description", "Agent authentication token. Get this token by pairing the agent with a pairing code.");
+                jsonWriter.WriteEndObject();
+                jsonWriter.WriteEndObject();
+                
+                jsonWriter.WriteEndObject();
+            }
+            else
+            {
+                prop.WriteTo(jsonWriter);
+            }
+        }
+        
+        // If components didn't exist, add it
+        if (!root.TryGetProperty("components", out _))
+        {
+            jsonWriter.WritePropertyName("components");
+            jsonWriter.WriteStartObject();
+            jsonWriter.WritePropertyName("securitySchemes");
+            jsonWriter.WriteStartObject();
+            jsonWriter.WritePropertyName("AgentToken");
+            jsonWriter.WriteStartObject();
+            jsonWriter.WriteString("type", "apiKey");
+            jsonWriter.WriteString("in", "header");
+            jsonWriter.WriteString("name", "X-Agent-Token");
+            jsonWriter.WriteString("description", "Agent authentication token. Get this token by pairing the agent with a pairing code.");
+            jsonWriter.WriteEndObject();
+            jsonWriter.WriteEndObject();
+            jsonWriter.WriteEndObject();
+        }
+        
+        jsonWriter.WriteEndObject();
+        jsonWriter.Flush();
+        
+        stream.Position = 0;
+        var modifiedJson = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        
+        return Results.Content(modifiedJson, "application/json");
+    });
+    
+    // Configure Scalar to use the custom OpenAPI document with auth
+    app.MapScalarApiReference(options =>
+    {
+        options
+            .WithTheme(ScalarTheme.BluePlanet)
+            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
+    });
 }
-
 
 app.UseHttpsRedirection();
 

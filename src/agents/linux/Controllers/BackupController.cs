@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.OpenApi.Models;
 using agent.Attributes;
 
 namespace agent.Controllers;
@@ -9,6 +10,7 @@ namespace agent.Controllers;
 [ApiController]
 [Route("[controller]")]
 [RequireAgentToken]
+[ProducesResponseType(StatusCodes.Status401Unauthorized)]
 public class BackupController : ControllerBase
 {
     private readonly ILogger<BackupController> _logger;
