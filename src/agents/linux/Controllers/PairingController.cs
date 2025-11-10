@@ -6,7 +6,6 @@ using agent.Models;
 namespace agent.Controllers;
 
 [ApiController]
-[Route("[controller]")]
 public class PairingController : ControllerBase
 {
     private readonly ILogger<PairingController> _logger;
@@ -54,7 +53,7 @@ public class PairingController : ControllerBase
         Console.WriteLine("========================================\n");
     }
 
-    [HttpGet("code")]
+    [HttpGet("/Pairing/code")]
     public IActionResult GetPairingCode()
     {
         // Get active code or generate new one
@@ -78,7 +77,7 @@ public class PairingController : ControllerBase
         });
     }
 
-    [HttpPost("verify")]
+    [HttpPost("/Pairing/verify")]
     public async Task<IActionResult> VerifyPairingCode([FromBody] VerifyCodeRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Code))
@@ -135,7 +134,7 @@ public class PairingController : ControllerBase
         });
     }
 
-    [HttpGet("status")]
+    [HttpGet("/Pairing/status")]
     public async Task<IActionResult> GetPairingStatus()
     {
         var hasToken = await _context.AgentTokens.AnyAsync();
@@ -151,7 +150,7 @@ public class PairingController : ControllerBase
         });
     }
 
-    [HttpPost("authenticate")]
+    [HttpPost("/Pairing/authenticate")]
     public async Task<IActionResult> Authenticate([FromHeader(Name = "X-Agent-Token")] string? token)
     {
         if (string.IsNullOrEmpty(token))

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.OpenApi.Models;
 using agent.Attributes;
 
 namespace agent.Controllers;
@@ -8,7 +7,6 @@ namespace agent.Controllers;
 /// Controller for backup operations that require authentication
 /// </summary>
 [ApiController]
-[Route("[controller]")]
 [RequireAgentToken]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 public class BackupController : ControllerBase
@@ -23,7 +21,7 @@ public class BackupController : ControllerBase
     /// <summary>
     /// Get backup status - requires authentication
     /// </summary>
-    [HttpGet("status")]
+    [HttpGet("/Backup/status")]
     public IActionResult GetBackupStatus()
     {
         _logger.LogInformation("Backup status requested by authenticated server");
@@ -40,7 +38,7 @@ public class BackupController : ControllerBase
     /// <summary>
     /// Execute a backup plan - requires authentication
     /// </summary>
-    [HttpPost("execute")]
+    [HttpPost("/Backup/execute")]
     public IActionResult ExecuteBackup([FromBody] ExecuteBackupRequest request)
     {
         if (request == null || string.IsNullOrWhiteSpace(request.Source) || string.IsNullOrWhiteSpace(request.Destination))
@@ -67,7 +65,7 @@ public class BackupController : ControllerBase
     /// <summary>
     /// Get agent information - requires authentication
     /// </summary>
-    [HttpGet("info")]
+    [HttpGet("/Backup/info")]
     public IActionResult GetAgentInfo()
     {
         _logger.LogInformation("Agent info requested by authenticated server");

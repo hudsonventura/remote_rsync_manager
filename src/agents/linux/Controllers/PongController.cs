@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 namespace agent.Controllers;
 
 [ApiController]
-[Route("[controller]")]
 public class PongController : ControllerBase
 {
     private readonly ILogger<PongController> _logger;
@@ -13,7 +12,7 @@ public class PongController : ControllerBase
         _logger = logger;
     }
 
-    [HttpGet]
+    [HttpGet("/Pong")]
     public IActionResult Get()
     {
         _logger.LogInformation("Pong endpoint called");
