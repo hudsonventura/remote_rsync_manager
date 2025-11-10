@@ -1,3 +1,4 @@
+# server
 src/server/obj/*
 src/server/bin/*
 
@@ -5,3 +6,7 @@ src/server/bin/*
 .env
 .env.local
 .env.*.local
+
+#Agents
+src/agents/linux/obj/*
+src/agents/linux/bin/*
