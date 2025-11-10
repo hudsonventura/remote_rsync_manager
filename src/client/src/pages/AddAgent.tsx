@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiPost } from "@/lib/api"
 
 export function AddAgent() {
   const navigate = useNavigate()
@@ -26,23 +25,9 @@ export function AddAgent() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/agent`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          hostname: hostname.trim(),
-        }),
+      await apiPost("/api/agent", {
+        hostname: hostname.trim(),
       })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to create agent" }))
-        throw new Error(errorData.message || "Failed to create agent")
-      }
-
-      await response.json()
       setSuccess(true)
       setHostname("")
       

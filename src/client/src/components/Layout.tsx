@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate, Outlet } from "react-router-dom"
 import { Sidebar } from "./Sidebar"
 import { Button } from "@/components/ui/button"
+import { ThemeToggle } from "./ThemeToggle"
 
 export function Layout() {
   const navigate = useNavigate()
@@ -42,9 +43,12 @@ export function Layout() {
               Logged in as <span className="font-medium text-foreground">{email}</span>
             </span>
           </div>
-          <Button variant="outline" onClick={handleLogout}>
-            Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button variant="outline" onClick={handleLogout}>
+              Logout
+            </Button>
+          </div>
         </header>
         <main className="flex-1 overflow-y-auto bg-background p-6">
           <Outlet />

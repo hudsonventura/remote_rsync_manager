@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet, apiPut } from "@/lib/api"
 
 interface BackupPlan {
   id: string
@@ -57,25 +56,7 @@ export function EditBackupPlan() {
         }
 
         // Fetch backup plan
-        const planResponse = await fetch(`${API_URL}/api/backupplan/${planId}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!planResponse.ok) {
-          if (planResponse.status === 404) {
-            setError("Backup plan not found")
-          } else {
-            throw new Error("Failed to fetch backup plan")
-          }
-          setIsLoadingData(false)
-          return
-        }
-
-        const planData: BackupPlan = await planResponse.json()
+        const planData: BackupPlan = await apiGet<BackupPlan>(`/api/backupplan/${planId}`)
         setName(planData.name)
         setDescription(planData.description)
         setSchedule(planData.schedule)
@@ -85,17 +66,11 @@ export function EditBackupPlan() {
         // Fetch agent if agentId is provided or from plan
         const agentIdToFetch = agentId || planData.agentid
         if (agentIdToFetch) {
-          const agentResponse = await fetch(`${API_URL}/api/agent/${agentIdToFetch}`, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-          })
-
-          if (agentResponse.ok) {
-            const agentData: Agent = await agentResponse.json()
+          try {
+            const agentData: Agent = await apiGet<Agent>(`/api/agent/${agentIdToFetch}`)
             setAgent(agentData)
+          } catch {
+            // Agent fetch failed, but continue without agent info
           }
         }
       } catch (err) {
@@ -126,25 +101,13 @@ export function EditBackupPlan() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/backupplan/${planId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim(),
-          schedule: schedule.trim() || "0 0 * * *",
-          source: source.trim(),
-          destination: destination.trim(),
-        }),
+      await apiPut(`/api/backupplan/${planId}`, {
+        name: name.trim(),
+        description: description.trim(),
+        schedule: schedule.trim() || "0 0 * * *",
+        source: source.trim(),
+        destination: destination.trim(),
       })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to update backup plan" }))
-        throw new Error(errorData.message || "Failed to update backup plan")
-      }
 
       // Redirect back to the appropriate page
       const redirectPath = agentIdFromPath 

@@ -5,8 +5,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiPost } from "@/lib/api"
 
 interface AuthResponse {
   token: string
@@ -27,23 +26,10 @@ export function LoginForm() {
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
+      const data: AuthResponse = await apiPost<AuthResponse>("/login", {
+        email,
+        password,
       })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Login failed" }))
-        throw new Error(errorData.message || "Invalid email or password")
-      }
-
-      const data: AuthResponse = await response.json()
       
       // Store token in sessionStorage
       sessionStorage.setItem("token", data.token)

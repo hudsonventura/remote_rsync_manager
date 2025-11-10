@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet, apiPut } from "@/lib/api"
 
 interface Agent {
   id: string
@@ -38,25 +37,7 @@ export function EditAgent() {
           return
         }
 
-        const response = await fetch(`${API_URL}/api/agent/${id}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            setError("Agent not found")
-          } else {
-            throw new Error("Failed to fetch agent")
-          }
-          setIsLoadingData(false)
-          return
-        }
-
-        const agentData: Agent = await response.json()
+        const agentData: Agent = await apiGet<Agent>(`/api/agent/${id}`)
         setHostname(agentData.hostname)
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred")
@@ -73,34 +54,22 @@ export function EditAgent() {
     setError(null)
     setIsLoading(true)
 
-    try {
-      const token = sessionStorage.getItem("token")
-      if (!token) {
-        navigate("/login")
-        return
-      }
+      try {
+        const token = sessionStorage.getItem("token")
+        if (!token) {
+          navigate("/login")
+          return
+        }
 
-      if (!id) {
-        setError("Agent ID is required")
-        setIsLoading(false)
-        return
-      }
+        if (!id) {
+          setError("Agent ID is required")
+          setIsLoading(false)
+          return
+        }
 
-      const response = await fetch(`${API_URL}/api/agent/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+        await apiPut(`/api/agent/${id}`, {
           hostname: hostname.trim(),
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to update agent" }))
-        throw new Error(errorData.message || "Failed to update agent")
-      }
+        })
 
       // Redirect back to agents list
       navigate("/agents")

@@ -2,8 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Plus, Pencil } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet } from "@/lib/api"
 
 interface BackupPlan {
   id: string
@@ -35,19 +34,7 @@ export function BackupPlansList() {
         }
 
         // Fetch all backup plans
-        const plansResponse = await fetch(`${API_URL}/api/backupplan`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!plansResponse.ok) {
-          throw new Error("Failed to fetch backup plans")
-        }
-
-        const plansData: BackupPlan[] = await plansResponse.json()
+        const plansData: BackupPlan[] = await apiGet<BackupPlan[]>("/api/backupplan")
         setBackupPlans(plansData)
       } catch (err) {
         if (err instanceof TypeError && err.message === "Failed to fetch") {

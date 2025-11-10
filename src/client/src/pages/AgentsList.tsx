@@ -2,8 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Plus, Pencil } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet } from "@/lib/api"
 
 interface Agent {
   id: string
@@ -27,19 +26,7 @@ export function AgentsList() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/agent`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch agents")
-      }
-
-      const data: Agent[] = await response.json()
+      const data: Agent[] = await apiGet<Agent[]>("/api/agent")
       setAgents(data)
     } catch (err) {
       if (err instanceof TypeError && err.message === "Failed to fetch") {

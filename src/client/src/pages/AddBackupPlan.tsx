@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet, apiPost } from "@/lib/api"
 
 interface Agent {
   id: string
@@ -40,25 +39,7 @@ export function AddBackupPlan() {
           return
         }
 
-        const response = await fetch(`${API_URL}/api/agent/${agentId}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            setError("Agent not found")
-          } else {
-            throw new Error("Failed to fetch agent")
-          }
-          setIsLoadingAgent(false)
-          return
-        }
-
-        const data: Agent = await response.json()
+        const data: Agent = await apiGet<Agent>(`/api/agent/${agentId}`)
         setAgent(data)
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred")
@@ -88,26 +69,14 @@ export function AddBackupPlan() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/backupplan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim(),
-          schedule: schedule.trim() || "0 0 * * *",
-          source: source.trim(),
-          destination: destination.trim(),
-          agentId: agentId,
-        }),
+      await apiPost("/api/backupplan", {
+        name: name.trim(),
+        description: description.trim(),
+        schedule: schedule.trim() || "0 0 * * *",
+        source: source.trim(),
+        destination: destination.trim(),
+        agentId: agentId,
       })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to create backup plan" }))
-        throw new Error(errorData.message || "Failed to create backup plan")
-      }
 
       // Redirect to backup plans page
       navigate(`/agents/${agentId}/backup-plans`)

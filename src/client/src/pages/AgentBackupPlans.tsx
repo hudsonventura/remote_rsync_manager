@@ -2,8 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Plus, Pencil } from "lucide-react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000"
+import { apiGet } from "@/lib/api"
 
 interface BackupPlan {
   id: string
@@ -46,40 +45,11 @@ export function AgentBackupPlans() {
         }
 
         // Fetch agent details
-        const agentResponse = await fetch(`${API_URL}/api/agent/${agentId}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!agentResponse.ok) {
-          if (agentResponse.status === 404) {
-            setError("Agent not found")
-            setIsLoading(false)
-            return
-          }
-          throw new Error("Failed to fetch agent")
-        }
-
-        const agentData: Agent = await agentResponse.json()
+        const agentData: Agent = await apiGet<Agent>(`/api/agent/${agentId}`)
         setAgent(agentData)
 
         // Fetch backup plans for the agent
-        const plansResponse = await fetch(`${API_URL}/api/backupplan/agent/${agentId}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (!plansResponse.ok) {
-          throw new Error("Failed to fetch backup plans")
-        }
-
-        const plansData: BackupPlan[] = await plansResponse.json()
+        const plansData: BackupPlan[] = await apiGet<BackupPlan[]>(`/api/backupplan/agent/${agentId}`)
         setBackupPlans(plansData)
       } catch (err) {
         if (err instanceof TypeError && err.message === "Failed to fetch") {
