@@ -115,9 +115,12 @@ if (app.Environment.IsDevelopment())
     // Configure Scalar to use the custom OpenAPI document with auth
     app.MapScalarApiReference(options =>
     {
-        options
-            .WithTheme(ScalarTheme.BluePlanet)
-            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
+        options.AddHttpAuthentication("X-Agent-Token", scheme =>
+        {
+            scheme.Description = "Use your token";
+        });
+        options.AddPreferredSecuritySchemes("X-Agent-Token");
+
     });
 }
 
