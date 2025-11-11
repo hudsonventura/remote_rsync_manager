@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 using server.Data;
+using server.HostedServices;
 using server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -67,6 +68,10 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddSingleton<ITokenStore, TokenStore>();
+builder.Services.AddScoped<BackupPlanExecutor>();
+
+// Register hosted services
+builder.Services.AddHostedService<BackupRunner>();
 
 var app = builder.Build();
 

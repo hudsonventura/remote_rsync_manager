@@ -6,7 +6,6 @@ using server.Models;
 namespace server.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
 public class BackupPlanController : ControllerBase
 {
     private readonly DBContext _context;
@@ -18,7 +17,7 @@ public class BackupPlanController : ControllerBase
         _logger = logger;
     }
 
-    [HttpPost]
+    [HttpPost("/api/backupplan")]
     [ProducesResponseType(typeof(BackupPlan), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -81,7 +80,7 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpGet]
+    [HttpGet("/api/backupplan")]
     [ProducesResponseType(typeof(List<BackupPlanResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllBackupPlans()
     {
@@ -113,7 +112,7 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("/api/backupplan/{id}")]
     [ProducesResponseType(typeof(BackupPlan), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetBackupPlan(Guid id)
@@ -136,7 +135,7 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("/api/backupplan/{id}")]
     [ProducesResponseType(typeof(BackupPlan), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -187,7 +186,7 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpGet("agent/{agentId}")]
+    [HttpGet("/api/backupplan/agent/{agentId}")]
     [ProducesResponseType(typeof(List<BackupPlan>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetBackupPlansByAgent(Guid agentId)
@@ -216,7 +215,7 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("/api/backupplan/{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteBackupPlan(Guid id)
