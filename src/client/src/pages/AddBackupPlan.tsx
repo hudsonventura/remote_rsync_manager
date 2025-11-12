@@ -7,6 +7,7 @@ import { ArrowLeft, FolderOpen } from "lucide-react"
 import { apiGet, apiPost } from "@/lib/api"
 import { FileBrowser } from "@/components/FileBrowser"
 import { ServerFileBrowser } from "@/components/ServerFileBrowser"
+import { CronDescription } from "@/components/CronDescription"
 
 interface Agent {
   id: string
@@ -177,6 +178,7 @@ export function AddBackupPlan() {
             <p className="text-sm text-muted-foreground">
               Cron expression (e.g., "0 0 * * *" for daily at midnight)
             </p>
+            <CronDescription cronExpression={schedule} />
           </div>
 
           <div className="space-y-2">
