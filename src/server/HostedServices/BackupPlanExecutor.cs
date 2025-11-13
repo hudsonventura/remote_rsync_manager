@@ -74,6 +74,7 @@ public class BackupPlanExecutor
 
             // Copy files from source (agent) to destination
             await CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination);
+            await CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination);
 
             _logger.LogInformation("Backup plan {BackupPlanId} execution completed successfully", backupPlan.id);
         }
