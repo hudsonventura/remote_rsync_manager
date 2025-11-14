@@ -9,6 +9,9 @@ using server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var workingDirectory = Directory.GetCurrentDirectory()+ "teste";
+
+
 // Add services to the container.
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

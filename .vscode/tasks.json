@@ -12,13 +12,39 @@
       "type": "shell",
       "command": "docker compose up postgres -d",
       "problemMatcher": [],
-      "dependsOn": "dotnet: build"
+      "dependsOn": "client: dev"
     },
     {
       "label": "docker compose: down",
       "type": "shell",
       "command": "docker compose down",
       "problemMatcher": []
+    },
+    {
+      "label": "client: dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": [
+          {
+            "regexp": ".",
+            "file": 1,
+            "location": 2,
+            "message": 3
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "VITE v"    // or "ready" depending on framework used
+        }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/src/client"
+      },
+      "dependsOn": "dotnet: build"
     }
   ]
 }
