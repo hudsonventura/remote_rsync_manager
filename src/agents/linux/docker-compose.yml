@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  agent-linux:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: remember-agent-linux
+    ports:
+      - "5002:5002"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=https://+:5002
+    volumes:
+      # Mount the file system you want to backup (adjust path as needed)
+      # Example: Mount specific directory instead of entire filesystem
+      - /:/host:ro  # Read-only mount of host filesystem
+    restart: unless-stopped
+
+
