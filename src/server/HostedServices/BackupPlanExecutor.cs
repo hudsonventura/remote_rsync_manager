@@ -73,8 +73,15 @@ public class BackupPlanExecutor
             await DeleteFilesFromDestination(comparisonResult.DeletedItems, backupPlan.destination);
 
             // Copy files from source (agent) to destination
-            await CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination);
-            await CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination);
+            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination))
+            {
+                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
+            }
+            
+            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination))
+            {
+                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
+            }
 
             _logger.LogInformation("Backup plan {BackupPlanId} execution completed successfully", backupPlan.id);
         }
@@ -508,7 +515,13 @@ public class BackupPlanExecutor
         return Task.CompletedTask;
     }
 
-    private async Task CopyFilesFromSource(
+    private class CopiedFileInfo
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public string DestinationPath { get; set; } = string.Empty;
+    }
+
+    private async IAsyncEnumerable<CopiedFileInfo> CopyFilesFromSource(
         List<FileSystemItem> itemsToCopy,
         Agent agent,
         string sourceBasePath,
@@ -517,7 +530,7 @@ public class BackupPlanExecutor
         if (itemsToCopy.Count == 0)
         {
             _logger.LogInformation("No files to copy from source");
-            return;
+            yield break;
         }
 
         _logger.LogInformation("Copying {Count} files from source to destination", itemsToCopy.Count);
@@ -527,12 +540,13 @@ public class BackupPlanExecutor
 
         foreach (var sourceItem in itemsToCopy)
         {
+            // Calculate destination path
+            var relativePath = GetRelativePath(sourceItem.Path, NormalizePath(sourceBasePath));
+            var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            CopiedFileInfo? copiedFile = null;
             try
             {
-                // Calculate destination path
-                var relativePath = GetRelativePath(sourceItem.Path, NormalizePath(sourceBasePath));
-                var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
-
                 // Ensure destination directory exists
                 var destinationDir = Path.GetDirectoryName(destinationPath);
                 if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
@@ -545,12 +559,22 @@ public class BackupPlanExecutor
                 await DownloadAndSaveFile(agent, sourceItem.Path, destinationPath);
 
                 copiedCount++;
-                _logger.LogDebug("Copied file: {SourcePath} -> {DestinationPath}", sourceItem.Path, destinationPath);
+                copiedFile = new CopiedFileInfo
+                {
+                    SourcePath = sourceItem.Path,
+                    DestinationPath = destinationPath
+                };
             }
             catch (Exception ex)
             {
                 errorCount++;
                 _logger.LogError(ex, "Error copying file: {Path}", sourceItem.Path);
+            }
+
+            // Yield the file info outside the try-catch so it can be logged immediately
+            if (copiedFile != null)
+            {
+                yield return copiedFile;
             }
         }
 
