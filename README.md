@@ -51,6 +51,32 @@ This step is required because the backend uses a self-signed certificate for HTT
 
 ### Running the Application
 
+#### Option 1: Using Docker (Recommended for Production)
+
+1. **Build and start all services:**
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **View logs:**
+   ```bash
+   docker-compose logs -f
+   ```
+
+3. **Stop services:**
+   ```bash
+   docker-compose down
+   ```
+
+4. **Access the application:**
+   - Backend API: https://localhost:5001
+   - Agent: https://localhost:5002
+   - API Documentation: https://localhost:5001/scalar/v1
+
+**Note:** The agent container mounts the host filesystem at `/host` (read-only) for backup operations. Adjust the volume mount in `docker-compose.yml` as needed.
+
+#### Option 2: Manual Development Setup
+
 1. **Start the backend server:**
    ```bash
    cd src/server
@@ -66,9 +92,17 @@ This step is required because the backend uses a self-signed certificate for HTT
    ```
    The frontend will be available at `http://localhost:5173`
 
-3. **Access the application:**
+3. **Start the agent (optional, for testing):**
+   ```bash
+   cd src/agents/linux
+   dotnet run
+   ```
+   The agent will start on `https://localhost:5002`
+
+4. **Access the application:**
    - Frontend: http://localhost:5173
    - Backend API: https://localhost:5001
+   - Agent: https://localhost:5002
    - API Documentation: https://localhost:5001/scalar/v1
 
 ### Default Credentials
