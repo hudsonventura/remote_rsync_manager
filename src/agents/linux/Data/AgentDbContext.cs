@@ -12,6 +12,7 @@ public class AgentDbContext : DbContext
 
     public DbSet<AgentToken> AgentTokens { get; set; }
     public DbSet<PairingCode> PairingCodes { get; set; }
+    public DbSet<CertificateConfig> CertificateConfigs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,6 +31,15 @@ public class AgentDbContext : DbContext
             entity.Property(e => e.code).IsRequired().HasMaxLength(6);
             entity.Property(e => e.created_at).IsRequired();
             entity.Property(e => e.expires_at).IsRequired();
+        });
+
+        modelBuilder.Entity<CertificateConfig>(entity =>
+        {
+            entity.HasKey(e => e.id);
+            entity.Property(e => e.certificatePath).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.certificatePassword).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.created_at).IsRequired();
+            entity.Property(e => e.updated_at).IsRequired();
         });
     }
 }
