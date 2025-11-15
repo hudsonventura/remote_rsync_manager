@@ -243,86 +243,41 @@ export function AgentBackupPlans() {
               key={plan.id}
               className="rounded-lg border bg-card p-6 shadow-sm"
             >
-              <div className="flex items-start justify-between">
-                <div className="space-y-2 flex-1">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-xl font-semibold">{plan.name}</h3>
-                    <span className={`px-2 py-1 text-xs font-medium rounded ${
-                      plan.active !== false 
-                        ? "bg-green-500/20 text-green-600 dark:text-green-400" 
-                        : "bg-gray-500/20 text-gray-600 dark:text-gray-400"
-                    }`}>
-                      {plan.active !== false ? "Active" : "Inactive"}
-                    </span>
-                  </div>
-                  {plan.description && (
-                    <p className="text-muted-foreground">{plan.description}</p>
-                  )}
-                  <div className="space-y-4 mt-4">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Schedule</p>
-                      <p className="text-sm font-mono mb-2">{plan.schedule}</p>
-                      <CronDescription cronExpression={plan.schedule} />
+              <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-xl font-semibold">{plan.name}</h3>
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${
+                        plan.active !== false 
+                          ? "bg-green-500/20 text-green-600 dark:text-green-400" 
+                          : "bg-gray-500/20 text-gray-600 dark:text-gray-400"
+                      }`}>
+                        {plan.active !== false ? "Active" : "Inactive"}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {plan.description && (
+                      <p className="text-muted-foreground">{plan.description}</p>
+                    )}
+                    <div className="space-y-4 mt-4">
                       <div>
-                        <p className="text-sm font-medium text-muted-foreground">Source</p>
-                        <p className="text-sm truncate" title={plan.source}>{plan.source}</p>
+                        <p className="text-sm font-medium text-muted-foreground">Schedule</p>
+                        <p className="text-sm font-mono mb-2">{plan.schedule}</p>
+                        <CronDescription cronExpression={plan.schedule} />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Destination</p>
-                        <p className="text-sm truncate" title={plan.destination}>{plan.destination}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">Source</p>
+                          <p className="text-sm truncate" title={plan.source}>{plan.source}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">Destination</p>
+                          <p className="text-sm truncate" title={plan.destination}>{plan.destination}</p>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-                <div className="flex flex-col gap-2 ml-4">
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleSimulate(plan.id)
-                      }}
-                      disabled={simulatingPlanId === plan.id || executingPlanId === plan.id}
-                    >
-                      <Play className="h-4 w-4 mr-2" />
-                      {simulatingPlanId === plan.id ? "Simulating..." : "Simulate"}
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => e.stopPropagation()}
-                          disabled={simulatingPlanId === plan.id || executingPlanId === plan.id}
-                        >
-                          <Zap className="h-4 w-4 mr-2" />
-                          Execute Now
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Execute Backup Plan</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to execute the backup plan <strong>{plan.name}</strong> now?
-                            This will start the backup process immediately.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleExecute(plan.id)}
-                            className="bg-primary text-primary-foreground hover:bg-primary/90"
-                          >
-                            Execute
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 ml-4">
                     <Button
                       variant="outline"
                       size="sm"
@@ -345,34 +300,79 @@ export function AgentBackupPlans() {
                       <Pencil className="h-4 w-4 mr-2" />
                       Edit
                     </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This action cannot be undone. This will permanently delete the backup plan
+                            <strong> {plan.name}</strong>.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => handleDelete(plan.id, plan.name)}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleSimulate(plan.id)
+                    }}
+                    disabled={simulatingPlanId === plan.id || executingPlanId === plan.id}
+                  >
+                    <Play className="h-4 w-4 mr-2" />
+                    {simulatingPlanId === plan.id ? "Simulating..." : "Simulate"}
+                  </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={(e) => e.stopPropagation()}
-                        className="text-destructive hover:text-destructive"
+                        disabled={simulatingPlanId === plan.id || executingPlanId === plan.id}
                       >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Delete
+                        <Zap className="h-4 w-4 mr-2" />
+                        Execute Now
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogTitle>Execute Backup Plan</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This action cannot be undone. This will permanently delete the backup plan
-                          <strong> {plan.name}</strong>.
+                          Are you sure you want to execute the backup plan <strong>{plan.name}</strong> now?
+                          This will start the backup process immediately.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction
-                          onClick={() => handleDelete(plan.id, plan.name)}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => handleExecute(plan.id)}
+                          className="bg-primary text-primary-foreground hover:bg-primary/90"
                         >
-                          Delete
+                          Execute
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>

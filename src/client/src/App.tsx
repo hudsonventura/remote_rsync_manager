@@ -13,6 +13,7 @@ import { AddBackupPlan } from "@/pages/AddBackupPlan"
 import { BackupPlansList } from "@/pages/BackupPlansList"
 import { EditBackupPlan } from "@/pages/EditBackupPlan"
 import { BackupLogs } from "@/pages/BackupLogs"
+import { About } from "@/pages/About"
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
           <Route path="/backup-plans/:planId/logs" element={<BackupLogs />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/about" element={<About />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

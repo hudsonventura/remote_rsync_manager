@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Home, Settings, User, LayoutDashboard, Server, Database } from "lucide-react"
+import { Home, Settings, User, LayoutDashboard, Server, Database, Info } from "lucide-react"
 
 const navigation = [
   { name: "Home", href: "/", icon: Home },
@@ -9,6 +9,7 @@ const navigation = [
   { name: "Backup Plans", href: "/backup-plans", icon: Database },
   { name: "Profile", href: "/profile", icon: User },
   { name: "Settings", href: "/settings", icon: Settings },
+  { name: "About", href: "/about", icon: Info },
 ]
 
 export function Sidebar() {
