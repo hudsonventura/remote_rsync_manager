@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Plus, Pencil, Trash2 } from "lucide-react"
 import { apiGet, apiDelete } from "@/lib/api"
+import { CronDescription } from "@/components/CronDescription"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -183,18 +184,21 @@ export function AgentBackupPlans() {
                   {plan.description && (
                     <p className="text-muted-foreground">{plan.description}</p>
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div className="space-y-4 mt-4">
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">Schedule</p>
-                      <p className="text-sm font-mono">{plan.schedule}</p>
+                      <p className="text-sm font-mono mb-2">{plan.schedule}</p>
+                      <CronDescription cronExpression={plan.schedule} />
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Source</p>
-                      <p className="text-sm">{plan.source}</p>
-                    </div>
-                    <div className="md:col-span-2">
-                      <p className="text-sm font-medium text-muted-foreground">Destination</p>
-                      <p className="text-sm">{plan.destination}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Source</p>
+                        <p className="text-sm truncate" title={plan.source}>{plan.source}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Destination</p>
+                        <p className="text-sm truncate" title={plan.destination}>{plan.destination}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
