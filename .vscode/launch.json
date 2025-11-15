@@ -5,6 +5,8 @@
       "name": "Server",
       "type": "coreclr",
       "request": "launch",
+      "preLaunchTask": "client: dev",
+      "postDebugTask": "client: stop",
       "program": "${command:dotrush.activeTargetPath}",
       "args": [],
       "cwd": "${workspaceFolder}/src/server/",

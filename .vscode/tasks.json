@@ -28,13 +28,26 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",
-          "endsPattern": "VITE v"    // or "ready" depending on framework used
+          "endsPattern": "(VITE|ready|Local:)"
         }
       },
       "options": {
         "cwd": "${workspaceFolder}/src/client"
       },
-      "dependsOn": "dotnet: build"
+      "dependsOn": "dotnet: build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "client: stop",
+      "type": "shell",
+      "command": "pkill -f 'vite' 2>/dev/null; pkill -f 'npm.*dev' 2>/dev/null; exit 0",
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}/src/client"
+      }
     }
   ]
 }
