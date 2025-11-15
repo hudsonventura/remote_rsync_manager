@@ -69,19 +69,25 @@ public class BackupPlanExecutor
                 comparisonResult.NewItems.Count,
                 comparisonResult.DeletedItems.Count);
 
+            // Get log context for logging operations
+            var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
+
             // Delete files from destination that don't exist in source
-            await DeleteFilesFromDestination(comparisonResult.DeletedItems, backupPlan.destination);
+            await DeleteFilesFromDestination(comparisonResult.DeletedItems, backupPlan.destination, backupPlan.id, logContext);
 
             // Copy files from source (agent) to destination
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination))
+            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, logContext, "Does not exist on destination"))
             {
                 _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
             }
             
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination))
+            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, logContext, "Changed on source"))
             {
                 _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
             }
+
+            // Log files that were ignored (exist in both with same size)
+            await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, logContext);
 
             _logger.LogInformation("Backup plan {BackupPlanId} execution completed successfully", backupPlan.id);
         }
@@ -471,12 +477,12 @@ public class BackupPlanExecutor
         return relativePath.Replace('\\', '/');
     }
 
-    private Task DeleteFilesFromDestination(List<FileSystemItem> itemsToDelete, string destinationBasePath)
+    private async Task DeleteFilesFromDestination(List<FileSystemItem> itemsToDelete, string destinationBasePath, Guid backupPlanId, LogDbContext logContext)
     {
         if (itemsToDelete.Count == 0)
         {
             _logger.LogInformation("No files to delete from destination");
-            return Task.CompletedTask;
+            return;
         }
 
         _logger.LogInformation("Deleting {Count} files from destination", itemsToDelete.Count);
@@ -488,31 +494,43 @@ public class BackupPlanExecutor
         {
             try
             {
-                if (System.IO.File.Exists(item.Path))
+                if (item.Type == "file" && System.IO.File.Exists(item.Path))
                 {
                     System.IO.File.Delete(item.Path);
                     deletedCount++;
                     _logger.LogDebug("Deleted file: {Path}", item.Path);
+
+                    // Log the deletion
+                    await LogFileOperation(logContext, backupPlanId, item, "Delete", "Does not exist on source");
                 }
-                else
+                else if (item.Type == "file")
                 {
                     _logger.LogWarning("File does not exist, skipping deletion: {Path}", item.Path);
+                    // Log as ignored since file doesn't exist
+                    await LogFileOperation(logContext, backupPlanId, item, "Ignored", "File does not exist, cannot delete");
                 }
             }
             catch (UnauthorizedAccessException ex)
             {
                 errorCount++;
                 _logger.LogWarning(ex, "Access denied when deleting file: {Path}", item.Path);
+                if (item.Type == "file")
+                {
+                    await LogFileOperation(logContext, backupPlanId, item, "Ignored", $"Access denied: {ex.Message}");
+                }
             }
             catch (Exception ex)
             {
                 errorCount++;
                 _logger.LogError(ex, "Error deleting file: {Path}", item.Path);
+                if (item.Type == "file")
+                {
+                    await LogFileOperation(logContext, backupPlanId, item, "Ignored", $"Error: {ex.Message}");
+                }
             }
         }
 
         _logger.LogInformation("Deletion complete: {DeletedCount} deleted, {ErrorCount} errors", deletedCount, errorCount);
-        return Task.CompletedTask;
     }
 
     private class CopiedFileInfo
@@ -525,7 +543,10 @@ public class BackupPlanExecutor
         List<FileSystemItem> itemsToCopy,
         Agent agent,
         string sourceBasePath,
-        string destinationBasePath)
+        string destinationBasePath,
+        Guid backupPlanId,
+        LogDbContext logContext,
+        string reason)
     {
         if (itemsToCopy.Count == 0)
         {
@@ -540,6 +561,12 @@ public class BackupPlanExecutor
 
         foreach (var sourceItem in itemsToCopy)
         {
+            // Only process files, not directories
+            if (sourceItem.Type != "file")
+            {
+                continue;
+            }
+
             // Calculate destination path
             var relativePath = GetRelativePath(sourceItem.Path, NormalizePath(sourceBasePath));
             var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -564,11 +591,16 @@ public class BackupPlanExecutor
                     SourcePath = sourceItem.Path,
                     DestinationPath = destinationPath
                 };
+
+                // Log the successful copy
+                await LogFileOperation(logContext, backupPlanId, sourceItem, "Copy", reason);
             }
             catch (Exception ex)
             {
                 errorCount++;
                 _logger.LogError(ex, "Error copying file: {Path}", sourceItem.Path);
+                // Log the failed copy as ignored
+                await LogFileOperation(logContext, backupPlanId, sourceItem, "Ignored", $"Error copying: {ex.Message}");
             }
 
             // Yield the file info outside the try-catch so it can be logged immediately
@@ -814,6 +846,58 @@ public class BackupPlanExecutor
         {
             _logger.LogError(ex, "Error simulating backup plan {BackupPlanId}", backupPlan.id);
             throw;
+        }
+    }
+
+    private async Task LogFileOperation(LogDbContext logContext, Guid backupPlanId, FileSystemItem item, string action, string reason)
+    {
+        try
+        {
+            var logEntry = new LogEntry
+            {
+                id = Guid.NewGuid(),
+                backupPlanId = backupPlanId,
+                datetime = DateTime.UtcNow,
+                fileName = item.Name,
+                filePath = item.Path,
+                size = item.Size,
+                action = action,
+                reason = reason
+            };
+
+            logContext.LogEntries.Add(logEntry);
+            await logContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log file operation for {FileName}", item.Name);
+        }
+    }
+
+    private async Task LogIgnoredFiles(
+        List<FileSystemItem> sourceItems,
+        List<FileSystemItem> destinationItems,
+        Guid backupPlanId,
+        LogDbContext logContext)
+    {
+        try
+        {
+            // Find files that exist in both source and destination with the same size (ignored)
+            var sourceFiles = sourceItems.Where(s => s.Type == "file").ToList();
+            var destinationFiles = destinationItems.Where(d => d.Type == "file").ToList();
+
+            var ignoredFiles = sourceFiles
+                .Where(s => destinationFiles.Any(d => d.Name == s.Name && d.Size == s.Size))
+                .ToList();
+
+            foreach (var file in ignoredFiles)
+            {
+                await LogFileOperation(logContext, backupPlanId, file, "Ignored", "File exists in both source and destination with same size");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log ignored files");
         }
     }
 }

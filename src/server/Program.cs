@@ -44,6 +44,13 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<DBContext>(options =>
     options.UseSqlite(connectionString));
 
+// Configure separate SQLite database for logs
+var logsConnectionString = builder.Configuration.GetConnectionString("LogsConnection")
+    ?? "Data Source=logs.db";
+
+builder.Services.AddDbContext<LogDbContext>(options =>
+    options.UseSqlite(logsConnectionString));
+
 // Configure JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey is not configured");

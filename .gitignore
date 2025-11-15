@@ -3,9 +3,7 @@ src/server/obj/*
 src/server/bin/*
 
 # Agent SQLite database
-src/agents/linux/agent.db
-src/agents/linux/agent.db-shm
-src/agents/linux/agent.db-wal
+src/agents/linux/agent.db*
 src/agents/linux/obj/*
 src/agents/linux/bin/*
 
@@ -14,6 +12,6 @@ src/agents/linux/bin/*
 .env.local
 .env.*.local
 docker-compose.yml
-src/server/remember.db
-src/server/remember.db-shm
-src/server/remember.db-wal
+src/server/remember.db*
+src/server/logs.db*
+

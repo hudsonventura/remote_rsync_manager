@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, Plus, Pencil, Trash2 } from "lucide-react"
+import { ArrowLeft, Plus, Pencil, Trash2, FileText } from "lucide-react"
 import { apiGet, apiDelete } from "@/lib/api"
 import { CronDescription } from "@/components/CronDescription"
 import {
@@ -203,6 +203,17 @@ export function AgentBackupPlans() {
                   </div>
                 </div>
                 <div className="flex gap-2 ml-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(`/backup-plans/${plan.id}/logs`)
+                    }}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Logs
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
