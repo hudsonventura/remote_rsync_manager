@@ -6,6 +6,7 @@ public record CreateBackupPlanRequest(
     string Schedule,
     string Source,
     string Destination,
-    Guid AgentId
+    Guid AgentId,
+    bool Active = false
 );
 

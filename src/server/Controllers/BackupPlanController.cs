@@ -53,6 +53,7 @@ public class BackupPlanController : ControllerBase
             schedule = string.IsNullOrWhiteSpace(request.Schedule) ? "0 0 * * *" : request.Schedule.Trim(),
             source = request.Source.Trim(),
             destination = request.Destination.Trim(),
+            active = request.Active,
             agent = agent
         };
 
@@ -98,6 +99,7 @@ public class BackupPlanController : ControllerBase
                            Schedule = bp.schedule,
                            Source = bp.source,
                            Destination = bp.destination,
+                           Active = bp.active,
                            AgentId = EF.Property<Guid?>(bp, "agentid"),
                            AgentHostname = agent != null ? agent.hostname : null
                        };
@@ -171,6 +173,7 @@ public class BackupPlanController : ControllerBase
             backupPlan.schedule = string.IsNullOrWhiteSpace(request.Schedule) ? "0 0 * * *" : request.Schedule.Trim();
             backupPlan.source = request.Source.Trim();
             backupPlan.destination = request.Destination.Trim();
+            backupPlan.active = request.Active;
 
             await _context.SaveChangesAsync();
 

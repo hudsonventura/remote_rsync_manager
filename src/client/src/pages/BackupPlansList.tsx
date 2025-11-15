@@ -23,6 +23,7 @@ interface BackupPlan {
   schedule: string
   source: string
   destination: string
+  active?: boolean
   agentId?: string
   agentHostname?: string
 }
@@ -162,6 +163,13 @@ export function BackupPlansList() {
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <h3 className="text-xl font-semibold">{plan.name}</h3>
+                    <span className={`px-2 py-1 text-xs font-medium rounded ${
+                      plan.active !== false 
+                        ? "bg-green-500/20 text-green-600 dark:text-green-400" 
+                        : "bg-gray-500/20 text-gray-600 dark:text-gray-400"
+                    }`}>
+                      {plan.active !== false ? "Active" : "Inactive"}
+                    </span>
                   </div>
                   <div className="mb-2">
                     <p className="text-sm font-medium text-muted-foreground">Agent</p>

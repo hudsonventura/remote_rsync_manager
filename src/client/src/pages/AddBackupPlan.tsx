@@ -23,6 +23,7 @@ export function AddBackupPlan() {
   const [schedule, setSchedule] = useState("0 0 * * *")
   const [source, setSource] = useState("")
   const [destination, setDestination] = useState("")
+  const [active, setActive] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingAgent, setIsLoadingAgent] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +82,7 @@ export function AddBackupPlan() {
         source: source.trim(),
         destination: destination.trim(),
         agentId: agentId,
+        active: active,
       })
 
       // Redirect to backup plans page
@@ -236,6 +238,25 @@ export function AddBackupPlan() {
             </div>
             <p className="text-sm text-muted-foreground">
               Path where the backup will be stored on the server
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                id="active"
+                type="checkbox"
+                checked={active}
+                onChange={(e) => setActive(e.target.checked)}
+                disabled={isLoading}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <Label htmlFor="active" className="cursor-pointer">
+                Active
+              </Label>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Only active backup plans will be executed according to their schedule
             </p>
           </div>
 

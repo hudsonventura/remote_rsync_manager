@@ -12,6 +12,7 @@ public class BackupPlan
 
     public string source { get; set; } = string.Empty;
     public string destination { get; set; } = string.Empty;
+    public bool active { get; set; } = false;
 
     public Agent? agent { get; set; }
 }

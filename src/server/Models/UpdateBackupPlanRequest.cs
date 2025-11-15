@@ -5,6 +5,7 @@ public record UpdateBackupPlanRequest(
     string Description,
     string Schedule,
     string Source,
-    string Destination
+    string Destination,
+    bool Active = true
 );
 

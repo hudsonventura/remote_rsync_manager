@@ -49,6 +49,7 @@ public class BackupRunner : IHostedService
             
             var backupPlans = dbContext.BackupPlans
                 .Include(bp => bp.agent)
+                .Where(bp => bp.active)
                 .ToList();
             
             _cronSchedules.Clear();
@@ -90,6 +91,7 @@ public class BackupRunner : IHostedService
             
             var backupPlans = dbContext.BackupPlans
                 .Include(bp => bp.agent)
+                .Where(bp => bp.active)
                 .ToList();
             
             // Check each cron schedule

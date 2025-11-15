@@ -27,6 +27,7 @@ interface BackupPlan {
   schedule: string
   source: string
   destination: string
+  active?: boolean
   agentid?: string
 }
 
@@ -47,6 +48,7 @@ export function EditBackupPlan() {
   const [schedule, setSchedule] = useState("0 0 * * *")
   const [source, setSource] = useState("")
   const [destination, setDestination] = useState("")
+  const [active, setActive] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -78,6 +80,7 @@ export function EditBackupPlan() {
         setSchedule(planData.schedule)
         setSource(planData.source)
         setDestination(planData.destination)
+        setActive(planData.active ?? false)
 
         // Fetch agent if agentId is provided or from plan
         const agentIdToFetch = agentId || planData.agentid
@@ -123,6 +126,7 @@ export function EditBackupPlan() {
         schedule: schedule.trim() || "0 0 * * *",
         source: source.trim(),
         destination: destination.trim(),
+        active: active,
       })
 
       // Redirect back to the appropriate page
@@ -314,6 +318,25 @@ export function EditBackupPlan() {
             </div>
             <p className="text-sm text-muted-foreground">
               Path where the backup will be stored on the server
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                id="active"
+                type="checkbox"
+                checked={active}
+                onChange={(e) => setActive(e.target.checked)}
+                disabled={isLoading}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <Label htmlFor="active" className="cursor-pointer">
+                Active
+              </Label>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Only active backup plans will be executed according to their schedule
             </p>
           </div>
 
