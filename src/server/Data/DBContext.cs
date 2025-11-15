@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using server.Models;
@@ -34,5 +35,20 @@ public class DBContext : DbContext
 
     public DbSet<Agent> Agents { get; set; }
     public DbSet<BackupPlan> BackupPlans { get; set; }
+    public DbSet<CertificateConfig> CertificateConfigs { get; set; }
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        
+        modelBuilder.Entity<CertificateConfig>(entity =>
+        {
+            entity.HasKey(e => e.id);
+            entity.Property(e => e.certificatePath).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.certificatePassword).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.created_at).IsRequired();
+            entity.Property(e => e.updated_at).IsRequired();
+        });
+    }
 }
 
