@@ -76,6 +76,9 @@ export function BackupLogs() {
     toDate: "",
   })
   
+  // Debounced filename filter for search
+  const [fileNameInput, setFileNameInput] = useState("")
+  
   // Sorting
   const [sortBy, setSortBy] = useState("datetime")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -157,12 +160,23 @@ export function BackupLogs() {
     fetchData()
   }, [planId, page, filters, sortBy, sortOrder, pageSize, navigate])
   
+  // Debounce filename filter - wait 500ms after user stops typing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters(prev => ({ ...prev, fileName: fileNameInput }))
+      setPage(1)
+    }, 500)
+    
+    return () => clearTimeout(timer)
+  }, [fileNameInput])
+  
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }))
     setPage(1) // Reset to first page when filter changes
   }
   
   const clearFilters = () => {
+    setFileNameInput("")
     setFilters({
       action: "All",
       fileName: "",
@@ -297,8 +311,8 @@ export function BackupLogs() {
                     id="filter-filename"
                     type="text"
                     placeholder="Search filename..."
-                    value={filters.fileName}
-                    onChange={(e) => handleFilterChange("fileName", e.target.value)}
+                    value={fileNameInput}
+                    onChange={(e) => setFileNameInput(e.target.value)}
                   />
                 </div>
                 
