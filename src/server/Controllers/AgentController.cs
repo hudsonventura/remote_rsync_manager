@@ -298,15 +298,12 @@ public class AgentController : ControllerBase
     private async Task<(bool Success, List<FileSystemItem>? Items, string? ErrorMessage)> TryCallBrowseEndpoint(string url, string agentToken)
     {
         var httpClientHandler = new HttpClientHandler();
-        
-        if (_environment.IsDevelopment())
-        {
-            httpClientHandler.ServerCertificateCustomValidationCallback = 
-                (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-                {
-                    return true;
-                };
-        }
+        httpClientHandler.ServerCertificateCustomValidationCallback = 
+            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
+            {
+                // Accept all certificates (ignore certificate validation)
+                return true;
+            };
 
         using var httpClient = new HttpClient(httpClientHandler);
         httpClient.Timeout = TimeSpan.FromSeconds(30);
@@ -526,17 +523,14 @@ public class AgentController : ControllerBase
 
     private async Task<(bool Success, string? Response, string ErrorMessage)> TryCallAuthenticatedEndpoint(string url, string agentToken)
     {
-        // Configure HttpClient to accept self-signed certificates in development
+        // Configure HttpClient to accept self-signed certificates (always ignore certificate validation)
         var httpClientHandler = new HttpClientHandler();
-        
-        if (_environment.IsDevelopment())
-        {
-            httpClientHandler.ServerCertificateCustomValidationCallback = 
-                (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-                {
-                    return true;
-                };
-        }
+        httpClientHandler.ServerCertificateCustomValidationCallback = 
+            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
+            {
+                // Accept all certificates (ignore certificate validation)
+                return true;
+            };
 
         using var httpClient = new HttpClient(httpClientHandler);
         httpClient.Timeout = TimeSpan.FromSeconds(10);
@@ -609,17 +603,14 @@ public class AgentController : ControllerBase
             baseUrl = $"https://{hostname}";
         }
 
-        // Configure HttpClient to accept self-signed certificates in development
+        // Configure HttpClient to accept self-signed certificates (always ignore certificate validation)
         var httpClientHandler = new HttpClientHandler();
-        
-        if (_environment.IsDevelopment())
-        {
-            httpClientHandler.ServerCertificateCustomValidationCallback = 
-                (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-                {
-                    return true;
-                };
-        }
+        httpClientHandler.ServerCertificateCustomValidationCallback = 
+            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
+            {
+                // Accept all certificates (ignore certificate validation)
+                return true;
+            };
 
         using var httpClient = new HttpClient(httpClientHandler);
         httpClient.Timeout = TimeSpan.FromSeconds(10);
