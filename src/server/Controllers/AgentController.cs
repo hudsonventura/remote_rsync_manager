@@ -650,8 +650,12 @@ public class AgentController : ControllerBase
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to connect to agent for pairing verification at {Hostname}", hostname);
-            return (false, null, $"Cannot reach agent for pairing verification: {ex.Message}");
+            string msg = ex.Message;
+            if(ex.InnerException != null)
+                msg += $" - {ex.InnerException.Message}";
+            
+            _logger.LogError(ex, "Failed to connect to agent for pairing verification at {Hostname}. Error: {Error}", hostname, msg);
+            return (false, null, $"Cannot reach agent for pairing verification: {msg}");
         }
         catch (TaskCanceledException)
         {
