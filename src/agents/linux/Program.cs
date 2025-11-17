@@ -1,14 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-using agent.Data;
-using agent.Models;
+using AgentCommon.Data;
+using AgentCommon.Models;
 using System.Security.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-
-builder.Services.AddControllers();
+// Register controllers from both this assembly and the common assembly
+builder.Services.AddControllers()
+    .AddApplicationPart(typeof(AgentCommon.Controllers.PongController).Assembly);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 

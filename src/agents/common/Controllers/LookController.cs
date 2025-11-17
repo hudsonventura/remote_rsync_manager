@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
-using agent.Attributes;
-using linux.Models;
+using Microsoft.Extensions.Logging;
+using AgentCommon.Attributes;
+using AgentCommon.Models;
 
-namespace agent.Controllers;
+namespace AgentCommon.Controllers;
 
 /// <summary>
 /// Controller for listing files and directories
@@ -248,6 +249,4 @@ public class LookController : ControllerBase
         return null;
     }
 }
-
-
 

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
-namespace agent.Controllers;
+namespace AgentCommon.Controllers;
 
 [ApiController]
 public class PongController : ControllerBase
@@ -19,3 +20,4 @@ public class PongController : ControllerBase
         return Ok(new { message = "Pong", timestamp = DateTime.UtcNow });
     }
 }
+

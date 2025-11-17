@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace agent.Models;
+namespace AgentCommon.Models;
 
 [Table("pairing_code")]
 public class PairingCode

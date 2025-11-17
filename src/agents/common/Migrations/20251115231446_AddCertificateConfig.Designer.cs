@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using agent.Data;
+using AgentCommon.Data;
 
 #nullable disable
 
-namespace agent.Migrations
+namespace AgentCommon.Migrations
 {
     [DbContext(typeof(AgentDbContext))]
     [Migration("20251115231446_AddCertificateConfig")]
@@ -20,7 +20,7 @@ namespace agent.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
 
-            modelBuilder.Entity("agent.Models.AgentToken", b =>
+            modelBuilder.Entity("AgentCommon.Models.AgentToken", b =>
                 {
                     b.Property<int>("id")
                         .ValueGeneratedOnAdd()
@@ -39,7 +39,7 @@ namespace agent.Migrations
                     b.ToTable("agent_token");
                 });
 
-            modelBuilder.Entity("agent.Models.CertificateConfig", b =>
+            modelBuilder.Entity("AgentCommon.Models.CertificateConfig", b =>
                 {
                     b.Property<int>("id")
                         .ValueGeneratedOnAdd()
@@ -66,7 +66,7 @@ namespace agent.Migrations
                     b.ToTable("certificate_config");
                 });
 
-            modelBuilder.Entity("agent.Models.PairingCode", b =>
+            modelBuilder.Entity("AgentCommon.Models.PairingCode", b =>
                 {
                     b.Property<int>("id")
                         .ValueGeneratedOnAdd()

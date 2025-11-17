@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace agent.Migrations
+namespace AgentCommon.Migrations
 {
     /// <inheritdoc />
     public partial class AddCertificateConfig : Migration

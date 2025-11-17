@@ -1,5 +1,4 @@
-
-namespace linux.Models;
+namespace AgentCommon.Models;
 
 /// <summary>
 /// Represents a file or directory item
@@ -14,3 +13,4 @@ public class FileSystemItem
     public string? Permissions { get; set; }
     public string? Md5 { get; set; } // MD5 hash (only for files)
 }
+

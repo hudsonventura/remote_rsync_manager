@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace agent.Models;
+namespace AgentCommon.Models;
 
 [Table("agent_token")]
 public class AgentToken

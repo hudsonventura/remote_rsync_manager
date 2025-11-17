@@ -1,9 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using agent.Data;
-using agent.Models;
+using Microsoft.Extensions.Logging;
+using AgentCommon.Data;
+using AgentCommon.Models;
 
-namespace agent.Controllers;
+namespace AgentCommon.Controllers;
 
 [ApiController]
 public class PairingController : ControllerBase

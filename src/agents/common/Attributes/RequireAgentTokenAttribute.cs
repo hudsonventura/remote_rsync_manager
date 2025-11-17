@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
-using agent.Data;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using AgentCommon.Data;
 
-namespace agent.Attributes;
+namespace AgentCommon.Attributes;
 
 /// <summary>
 /// Attribute that requires the X-Agent-Token header to be present and valid

@@ -1,8 +1,10 @@
 using System.IO;
 using Microsoft.AspNetCore.Mvc;
-using agent.Attributes;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using AgentCommon.Attributes;
 
-namespace agent.Controllers;
+namespace AgentCommon.Controllers;
 
 /// <summary>
 /// Controller for backup operations that require authentication
