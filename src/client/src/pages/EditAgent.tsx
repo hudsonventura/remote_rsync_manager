@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowLeft, RefreshCw, Trash2, Copy, Check } from "lucide-react"
 import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api"
 import {
   AlertDialog,
@@ -21,6 +21,7 @@ interface Agent {
   id: string
   name: string
   hostname: string
+  token?: string | null
 }
 
 export function EditAgent() {
@@ -33,6 +34,8 @@ export function EditAgent() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
+  const [agentToken, setAgentToken] = useState<string | null>(null)
+  const [tokenCopied, setTokenCopied] = useState(false)
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -55,6 +58,7 @@ export function EditAgent() {
         const agentData: Agent = await apiGet<Agent>(`/api/agent/${id}`)
         setName(agentData.name)
         setHostname(agentData.hostname)
+        setAgentToken(agentData.token || null)
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred")
       } finally {
@@ -184,6 +188,18 @@ export function EditAgent() {
     }
   }
 
+  const handleCopyToken = async () => {
+    if (agentToken) {
+      try {
+        await navigator.clipboard.writeText(agentToken)
+        setTokenCopied(true)
+        setTimeout(() => setTokenCopied(false), 2000)
+      } catch (err) {
+        setError("Failed to copy token to clipboard")
+      }
+    }
+  }
+
   if (isLoadingData) {
     return (
       <div className="space-y-6">
@@ -260,6 +276,38 @@ export function EditAgent() {
             />
             <p className="text-sm text-muted-foreground">
               The hostname or address of the agent
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="token">Agent Token</Label>
+            <div className="flex gap-2">
+              <Input
+                id="token"
+                type="text"
+                value={agentToken || "(no token - agent not paired)"}
+                readOnly
+                disabled
+                className="font-mono text-sm"
+              />
+              {agentToken && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleCopyToken}
+                  title="Copy token to clipboard"
+                >
+                  {tokenCopied ? (
+                    <Check className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              The authentication token used to communicate with this agent. This token is sent in the X-Agent-Token header.
             </p>
           </div>
 
