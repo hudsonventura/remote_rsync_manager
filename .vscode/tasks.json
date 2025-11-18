@@ -110,6 +110,16 @@
     //   ],
     //   "problemMatcher": []
     // }
+
+    ,{
+      "type": "shell",
+      "problemMatcher": [], 
+      "command": "dotnet build --configuration Debug",
+      "options": {
+        "cwd": "${workspaceFolder}/src/agents/windows"
+      },
+      "label": "agent/windows"
+    },
   ]
 }
 

@@ -21,7 +21,9 @@ class Program
 {
     private static CancellationTokenSource? _webServerCts;
 
+#if WINDOWS
     [STAThread]
+#endif
     public static void Main(string[] args)
     {
         // Start the web server in a background thread
