@@ -226,6 +226,37 @@ public class PairingViewModel : INotifyPropertyChanged
         }
     }
 
+    public async Task UnpairAgent()
+    {
+        try
+        {
+            // Remove all agent tokens
+            var tokens = await _context.AgentTokens.ToListAsync();
+            _context.AgentTokens.RemoveRange(tokens);
+            
+            // Remove all pairing codes
+            var codes = await _context.PairingCodes.ToListAsync();
+            _context.PairingCodes.RemoveRange(codes);
+            
+            await _context.SaveChangesAsync();
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                Status = "Agent unpaired. Generating new pairing code...";
+            });
+
+            // Generate a new pairing code
+            await RefreshCode();
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                Status = $"Error unpairing agent: {ex.Message}";
+            });
+        }
+    }
+
     protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

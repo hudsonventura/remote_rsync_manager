@@ -21,6 +21,15 @@ public partial class MainWindow : Window
         
         // Handle window closing event
         Closing += OnWindowClosing;
+        
+        // Ensure window is shown and brought to front
+        this.Opened += (s, e) =>
+        {
+            Show();
+            Activate();
+            Topmost = true;
+            Topmost = false; // Reset to allow other windows on top later
+        };
     }
 
     private async void InitializeViewModel()
@@ -44,6 +53,14 @@ public partial class MainWindow : Window
         if (_viewModel != null)
         {
             await _viewModel.RefreshCode();
+        }
+    }
+
+    private async void UnpairButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel != null)
+        {
+            await _viewModel.UnpairAgent();
         }
     }
 
