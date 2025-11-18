@@ -38,6 +38,22 @@
       "sourceFileMap": {
         "/Views": "${workspaceFolder}/Views"
       }
+    },
+    {
+      "name": "Agent Windows",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/agents/windows/bin/Debug/net10.0/agentWindows.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/agents/windows",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_HTTPS_PORT": "5002"
+      },
+      "sourceFileMap": {
+        "/Views": "${workspaceFolder}/Views"
+      }
     }
   ]
 }
