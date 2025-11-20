@@ -3,7 +3,7 @@
   "tasks": [
     {
       "type": "shell",
-      "problemMatcher": [], 
+      "problemMatcher": [],
       "command": "dotnet build --configuration Debug",
       "options": {
         "cwd": "${workspaceFolder}/src/server"
@@ -34,7 +34,7 @@
           "endsPattern": "(VITE|ready|Local:)"
         }
       }
-    }
+    },
     //   "options": {
     //     "cwd": "${workspaceFolder}/src/client"
     //   },
@@ -44,15 +44,15 @@
     //     "panel": "dedicated"
     //   }
     // },
-    // {
-    //   "label": "client: stop",
-    //   "type": "shell",
-    //   "command": "pkill -f 'vite' 2>/dev/null; pkill -f 'npm.*dev' 2>/dev/null; exit 0",
-    //   "problemMatcher": [],
-    //   "options": {
-    //     "cwd": "${workspaceFolder}/src/client"
-    //   }
-    // },
+    {
+      "label": "client: stop",
+      "type": "shell",
+      "command": "pkill -f 'vite' 2>/dev/null; pkill -f 'npm.*dev' 2>/dev/null; exit 0",
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}/src/client"
+      }
+    },
     // {
     //   "label": "agent: run",
     //   "type": "shell",
@@ -111,9 +111,9 @@
     //   "problemMatcher": []
     // }
 
-    ,{
+    {
       "type": "shell",
-      "problemMatcher": [], 
+      "problemMatcher": [],
       "command": "dotnet build --configuration Debug",
       "options": {
         "cwd": "${workspaceFolder}/src/agents/windows"
@@ -122,4 +122,3 @@
     },
   ]
 }
-
