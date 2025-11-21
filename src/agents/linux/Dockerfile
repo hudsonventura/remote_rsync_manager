@@ -3,16 +3,18 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy csproj files and restore dependencies
-COPY ["agent.csproj", "./"]
-RUN dotnet restore "agent.csproj"
+COPY ["linux/agent.csproj", "linux/"]
+COPY ["../common/common.csproj", "common/"]
+RUN dotnet restore "linux/agent.csproj"
 
 # Copy everything else and build
-COPY . .
-RUN dotnet build "agent.csproj" -c Release -o /app/build
+COPY ["linux/", "linux/"]
+COPY ["../common/", "common/"]
+RUN dotnet build "linux/agent.csproj" -c Release -o /app/build
 
 # Publish stage
 FROM build AS publish
-RUN dotnet publish "agent.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "linux/agent.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
