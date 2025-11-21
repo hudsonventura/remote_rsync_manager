@@ -11,7 +11,7 @@ public class BackupPlanExecutor
     private readonly IWebHostEnvironment _environment;
 
     public BackupPlanExecutor(
-        ILogger<BackupPlanExecutor> logger, 
+        ILogger<BackupPlanExecutor> logger,
         IServiceScopeFactory serviceScopeFactory,
         IWebHostEnvironment environment)
     {
@@ -80,7 +80,7 @@ public class BackupPlanExecutor
             {
                 _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
             }
-            
+
             await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, logContext, "Changed on source"))
             {
                 _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
@@ -103,7 +103,7 @@ public class BackupPlanExecutor
         // Determine base URL - try HTTPS first, then HTTP
         string baseUrl;
         var hostname = agent.hostname;
-        
+
         if (hostname.StartsWith("http://"))
         {
             baseUrl = hostname;
@@ -132,7 +132,7 @@ public class BackupPlanExecutor
 
         var lookUrl = $"{baseUrl}/Look?dir={Uri.EscapeDataString(sourcePath)}";
         var response = await TryCallLookEndpointAsync(lookUrl, agent.token!);
-        
+
         if (!response.Success)
         {
             throw new HttpRequestException($"Failed to call /Look endpoint: {response.ErrorMessage}");
@@ -143,21 +143,21 @@ public class BackupPlanExecutor
 
     private async Task<(bool Success, List<FileSystemItem>? Items, string ErrorMessage)> TryCallLookEndpointAsync(string url, string agentToken)
     {
-        // Configure HttpClient to accept self-signed certificates in development
+        // Configure HttpClient to accept self-signed certificates and invalid certificates
         var httpClientHandler = new HttpClientHandler();
-        
-        if (_environment.IsDevelopment())
-        {
-            httpClientHandler.ServerCertificateCustomValidationCallback = 
-                (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-                {
-                    return true;
-                };
-        }
+
+
+        // Accept self-signed certificates and invalid certificates
+        httpClientHandler.ServerCertificateCustomValidationCallback =
+            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
+            {
+                return true;
+            };
 
         using var httpClient = new HttpClient(httpClientHandler);
+
         httpClient.Timeout = TimeSpan.FromMinutes(5); // Longer timeout for file system operations
-        
+
         // Add the authentication token header
         httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
 
@@ -176,14 +176,14 @@ public class BackupPlanExecutor
             else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}", 
+                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}",
                     url, response.StatusCode, errorContent);
                 return (false, null, "Authentication failed: Invalid or expired token");
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to call /Look endpoint at {Url}: {StatusCode}, {Error}", 
+                _logger.LogWarning("Failed to call /Look endpoint at {Url}: {StatusCode}, {Error}",
                     url, response.StatusCode, errorContent);
                 return (false, null, $"HTTP {response.StatusCode}: {errorContent}");
             }
@@ -388,7 +388,7 @@ public class BackupPlanExecutor
         public List<FileSystemItem> EditedItems { get; set; } = new();
         public List<FileSystemItem> DeletedItems { get; set; } = new();
 
-        
+
     }
 
     private FileSystemComparisonResult CompareFileSystemItems(
@@ -404,10 +404,10 @@ public class BackupPlanExecutor
         var normalizedDestBase = NormalizePath(destinationBasePath);
 
         // Check if source and destination are the same (case-insensitive on Windows)
-        var comparison = OperatingSystem.IsWindows() 
-            ? StringComparison.OrdinalIgnoreCase 
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
-        
+
         if (normalizedSourceBase.Equals(normalizedDestBase, comparison))
         {
             _logger.LogWarning("Source and destination paths are the same: {Path}. Skipping backup comparison.", normalizedSourceBase);
@@ -416,8 +416,8 @@ public class BackupPlanExecutor
 
         // Create dictionaries for quick lookup by relative path
         // Use case-insensitive comparison on Windows
-        var pathComparer = OperatingSystem.IsWindows() 
-            ? StringComparer.OrdinalIgnoreCase 
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
         var sourceFilesByRelativePath = new Dictionary<string, FileSystemItem>(pathComparer);
         var destinationFilesByRelativePath = new Dictionary<string, FileSystemItem>(pathComparer);
@@ -441,7 +441,7 @@ public class BackupPlanExecutor
 
         // Normalize path separators and remove trailing separators
         var normalized = path.Replace('\\', '/').TrimEnd('/');
-        
+
         // On Windows, preserve drive letter format (C:)
         if (OperatingSystem.IsWindows() && normalized.Length >= 2 && normalized[1] == ':')
         {
@@ -460,8 +460,8 @@ public class BackupPlanExecutor
         var normalizedBase = NormalizePath(basePath);
 
         // Handle case-insensitive comparison on Windows
-        var comparison = OperatingSystem.IsWindows() 
-            ? StringComparison.OrdinalIgnoreCase 
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
         if (!normalizedFull.StartsWith(normalizedBase, comparison))
@@ -472,7 +472,7 @@ public class BackupPlanExecutor
 
         // Extract relative path
         var relativePath = normalizedFull.Substring(normalizedBase.Length).TrimStart('/', '\\');
-        
+
         // Normalize path separators to forward slashes for consistency
         return relativePath.Replace('\\', '/');
     }
@@ -656,17 +656,14 @@ public class BackupPlanExecutor
 
     private async Task<(bool Success, string ErrorMessage)> TryDownloadFileAsync(string url, string agentToken, string destinationPath)
     {
-        // Configure HttpClient to accept self-signed certificates in development
+        // Configure HttpClient to accept self-signed certificates and invalid certificates
         var httpClientHandler = new HttpClientHandler();
 
-        if (_environment.IsDevelopment())
-        {
-            httpClientHandler.ServerCertificateCustomValidationCallback =
-                (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-                {
-                    return true;
-                };
-        }
+        httpClientHandler.ServerCertificateCustomValidationCallback =
+            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
+            {
+                return true;
+            };
 
         using var httpClient = new HttpClient(httpClientHandler);
         httpClient.Timeout = TimeSpan.FromMinutes(10); // Longer timeout for file downloads
