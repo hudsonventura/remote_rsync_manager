@@ -17,6 +17,7 @@ interface LogRetentionPeriodResponse {
 interface DeleteLogsResponse {
   executionsDeleted: number
   logsDeleted: number
+  notificationsDeleted: number
   spaceSavedBytes: number
   message: string
 }
@@ -182,14 +183,14 @@ export function Settings() {
               </div>
 
               <div className="flex items-center gap-4">
-                <Button
+                {/* <Button
                   onClick={handleSave}
                   disabled={isLoading}
                   variant="default"
                 >
                   <Save className="h-4 w-4 mr-2" />
                   Save Date
-                </Button>
+                </Button> */}
 
                 <Button
                   onClick={handleDeleteLogs}
@@ -249,6 +250,7 @@ export function Settings() {
                   <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                     <li>Executions deleted: {deleteResult.executionsDeleted}</li>
                     <li>Log entries deleted: {deleteResult.logsDeleted}</li>
+                    <li>Notifications deleted: {deleteResult.notificationsDeleted}</li>
                     <li className="font-medium text-foreground">
                       Disk space saved: {formatBytes(deleteResult.spaceSavedBytes)}
                     </li>

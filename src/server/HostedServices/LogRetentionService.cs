@@ -99,6 +99,19 @@ public class LogRetentionService : IHostedService
 
                 await logContext.SaveChangesAsync();
 
+                // Delete notifications for deleted executions
+                var notificationsDeleted = await dbContext.Notifications
+                    .Where(n => n.executionId.HasValue && executionsToDelete.Contains(n.executionId.Value))
+                    .CountAsync();
+
+                dbContext.Notifications.RemoveRange(
+                    dbContext.Notifications.Where(n => n.executionId.HasValue && executionsToDelete.Contains(n.executionId.Value))
+                );
+
+                await dbContext.SaveChangesAsync();
+
+                _logger.LogInformation("Deleted {NotificationsCount} notifications associated with deleted executions", notificationsDeleted);
+
                 // Get database file path and perform VACUUM to free disk space
                 var logsConnectionString = "Data Source=data/logs.db";
                 var dbPath = ResolveDbPath(logsConnectionString);
@@ -135,18 +148,20 @@ public class LogRetentionService : IHostedService
                         spaceSaved = sizeBefore - sizeAfter;
 
                         _logger.LogInformation(
-                            "Automatic log retention cleanup completed. Deleted {ExecutionsCount} executions and {LogsCount} log entries. Space saved: {SpaceSaved}",
+                            "Automatic log retention cleanup completed. Deleted {ExecutionsCount} executions, {LogsCount} log entries, and {NotificationsCount} notifications. Space saved: {SpaceSaved}",
                             executionsToDelete.Count,
                             logsDeleted,
+                            notificationsDeleted,
                             FormatBytes(spaceSaved));
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Failed to execute VACUUM on {DbPath}", dbPath);
                         _logger.LogInformation(
-                            "Automatic log retention cleanup completed. Deleted {ExecutionsCount} executions and {LogsCount} log entries.",
+                            "Automatic log retention cleanup completed. Deleted {ExecutionsCount} executions, {LogsCount} log entries, and {NotificationsCount} notifications.",
                             executionsToDelete.Count,
-                            logsDeleted);
+                            logsDeleted,
+                            notificationsDeleted);
                     }
                 }
             }

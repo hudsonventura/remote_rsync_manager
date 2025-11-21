@@ -231,6 +231,19 @@ public class SettingsController : ControllerBase
 
             await _logContext.SaveChangesAsync();
 
+            // Delete notifications for deleted executions
+            var notificationsDeleted = await _context.Notifications
+                .Where(n => n.executionId.HasValue && executionsToDelete.Contains(n.executionId.Value))
+                .CountAsync();
+
+            _context.Notifications.RemoveRange(
+                _context.Notifications.Where(n => n.executionId.HasValue && executionsToDelete.Contains(n.executionId.Value))
+            );
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Deleted {NotificationsCount} notifications associated with deleted executions", notificationsDeleted);
+
             // Get database file path and perform VACUUM to free disk space
             var logsConnectionString = "Data Source=data/logs.db";
             var dbPath = ResolveDbPath(logsConnectionString);
@@ -282,8 +295,9 @@ public class SettingsController : ControllerBase
             {
                 ExecutionsDeleted = executionsToDelete.Count,
                 LogsDeleted = logsDeleted,
+                NotificationsDeleted = notificationsDeleted,
                 SpaceSavedBytes = spaceSaved,
-                Message = $"Successfully deleted {executionsToDelete.Count} executions and {logsDeleted} log entries. Disk space saved: {spaceSavedFormatted}"
+                Message = $"Successfully deleted {executionsToDelete.Count} executions, {logsDeleted} log entries, and {notificationsDeleted} notifications. Disk space saved: {spaceSavedFormatted}"
             };
 
             return Ok(response);
@@ -325,6 +339,7 @@ public class DeleteLogsResponse
 {
     public int ExecutionsDeleted { get; set; }
     public int LogsDeleted { get; set; }
+    public int NotificationsDeleted { get; set; }
     public long SpaceSavedBytes { get; set; }
     public string Message { get; set; } = string.Empty;
 }

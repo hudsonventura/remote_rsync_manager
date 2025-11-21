@@ -41,6 +41,8 @@ export function Notifications() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default")
+  const [previousUnreadCount, setPreviousUnreadCount] = useState(0)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const fetchNotifications = async () => {
@@ -59,6 +61,68 @@ export function Notifications() {
       console.error("Error fetching notifications:", err)
     }
   }
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ("Notification" in window) {
+      const permission = Notification.permission
+      setNotificationPermission(permission)
+
+      if (permission === "default") {
+        // Request permission when component mounts
+        Notification.requestPermission().then((permission) => {
+          setNotificationPermission(permission)
+        })
+      }
+    }
+  }, [])
+
+  const handleNotificationClick = (notification: Notification) => {
+    if (!notification.isRead) {
+      handleMarkAsRead(notification.id)
+    }
+
+    if (notification.backupPlanId && notification.executionId) {
+      navigate(`/backup-plans/${notification.backupPlanId}/logs/${notification.executionId}`)
+      setIsOpen(false)
+    } else if (notification.backupPlanId) {
+      navigate(`/backup-plans/${notification.backupPlanId}/logs`)
+      setIsOpen(false)
+    }
+  }
+
+  // Show browser notifications when new unread notifications arrive
+  useEffect(() => {
+    if (notificationPermission === "granted" && unreadCount > previousUnreadCount && previousUnreadCount > 0) {
+      // New notifications arrived
+      const newNotifications = notifications.filter(n => !n.isRead)
+      const latestNotification = newNotifications[0] // Most recent unread
+
+      if (latestNotification) {
+        const browserNotification = new Notification(latestNotification.title, {
+          body: latestNotification.message,
+          icon: "/icon.png",
+          badge: "/icon.png",
+          tag: latestNotification.id, // Prevent duplicate notifications
+          requireInteraction: false,
+        })
+
+        browserNotification.onclick = () => {
+          window.focus()
+          handleNotificationClick(latestNotification)
+          browserNotification.close()
+        }
+
+        // Auto-close after 5 seconds
+        setTimeout(() => {
+          browserNotification.close()
+        }, 5000)
+      }
+    }
+
+    setPreviousUnreadCount(unreadCount)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unreadCount, notifications, notificationPermission, previousUnreadCount])
 
   useEffect(() => {
     fetchNotifications()
@@ -116,20 +180,6 @@ export function Notifications() {
     }
   }
 
-  const handleNotificationClick = (notification: Notification) => {
-    if (!notification.isRead) {
-      handleMarkAsRead(notification.id)
-    }
-
-    if (notification.backupPlanId && notification.executionId) {
-      navigate(`/backup-plans/${notification.backupPlanId}/logs/${notification.executionId}`)
-      setIsOpen(false)
-    } else if (notification.backupPlanId) {
-      navigate(`/backup-plans/${notification.backupPlanId}/logs`)
-      setIsOpen(false)
-    }
-  }
-
   const getNotificationColor = (type: string) => {
     switch (type) {
       case "BackupCompleted":
@@ -141,6 +191,13 @@ export function Notifications() {
     }
   }
 
+  const handleEnableNotifications = async () => {
+    if ("Notification" in window) {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+    }
+  }
+
   return (
     <div className="relative" ref={dropdownRef}>
       <Button
@@ -148,12 +205,16 @@ export function Notifications() {
         size="icon"
         onClick={() => setIsOpen(!isOpen)}
         className="relative"
+        title={notificationPermission === "denied" ? "Browser notifications are blocked. Please enable them in your browser settings." : ""}
       >
         <Bell className="h-5 w-5" />
         {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
+        )}
+        {notificationPermission === "denied" && (
+          <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-yellow-500"></span>
         )}
       </Button>
 
@@ -162,6 +223,16 @@ export function Notifications() {
           <div className="flex items-center justify-between p-4 border-b">
             <h3 className="font-semibold">Notifications</h3>
             <div className="flex items-center gap-2">
+              {notificationPermission !== "granted" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleEnableNotifications}
+                  title="Enable browser push notifications"
+                >
+                  Enable Push
+                </Button>
+              )}
               {unreadCount > 0 && (
                 <Button
                   variant="ghost"
