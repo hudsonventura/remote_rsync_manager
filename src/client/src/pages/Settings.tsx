@@ -36,7 +36,6 @@ export function Settings() {
   const navigate = useNavigate()
   const [logRetentionDate, setLogRetentionDate] = useState<string>("")
   const [logRetentionMonths, setLogRetentionMonths] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
   const [isSavingPeriod, setIsSavingPeriod] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -73,24 +72,6 @@ export function Settings() {
 
     fetchSettings()
   }, [navigate])
-
-  const handleSave = async () => {
-    setIsLoading(true)
-    setError(null)
-    setSuccess(null)
-
-    try {
-      await apiPost("/api/settings/log-retention-date", {
-        date: logRetentionDate || null
-      })
-
-      setSuccess("Log retention date saved successfully")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save log retention date")
-    } finally {
-      setIsLoading(false)
-    }
-  }
 
   const handleSavePeriod = async () => {
     setIsSavingPeriod(true)
