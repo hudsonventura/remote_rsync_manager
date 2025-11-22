@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2 } from "lucide-react"
 import { apiGet } from "@/lib/api"
+import { formatDateTimeWithTimezone } from "@/components/TimezoneSelector"
 
 interface LogEntry {
   id: string
@@ -47,31 +48,34 @@ function formatFileSize(bytes: number | null): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
-function formatDateTime(dateTime: string): string {
-  const date = new Date(dateTime)
-  return date.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-    timeZone: 'UTC'
-  }) + ' UTC'
+function formatDateTime(dateTime: string, timezone: string = "UTC"): string {
+  return formatDateTimeWithTimezone(dateTime, timezone)
 }
 
-function formatExecutionDateTime(dateTime: string): string {
-  const date = new Date(dateTime)
-  return date.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'UTC'
-  }) + ' UTC'
+function formatExecutionDateTime(dateTime: string, timezone: string = "UTC"): string {
+  try {
+    const date = new Date(dateTime)
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: timezone
+    }).format(date) + ` (${timezone})`
+  } catch (err) {
+    const date = new Date(dateTime)
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC'
+    }) + ' UTC'
+  }
 }
 
 export function BackupLogs() {
@@ -103,6 +107,29 @@ export function BackupLogs() {
   // Sorting
   const [sortBy, setSortBy] = useState("datetime")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+
+  // Timezone from navbar selector
+  const [timezone, setTimezone] = useState<string>("UTC")
+
+  // Listen for timezone changes from navbar
+  useEffect(() => {
+    const handleTimezoneChange = (event: CustomEvent) => {
+      const newTimezone = event.detail || "UTC"
+      setTimezone(newTimezone)
+    }
+
+    window.addEventListener('timezoneChanged', handleTimezoneChange as EventListener)
+    
+    // Load initial timezone from sessionStorage
+    const saved = sessionStorage.getItem("selectedTimezone")
+    if (saved) {
+      setTimezone(saved)
+    }
+
+    return () => {
+      window.removeEventListener('timezoneChanged', handleTimezoneChange as EventListener)
+    }
+  }, [])
 
   // Fetch executions list
   useEffect(() => {
@@ -376,11 +403,11 @@ export function BackupLogs() {
                             {execution.name}
                           </td>
                           <td className="p-3 text-sm text-muted-foreground">
-                            {formatExecutionDateTime(execution.startDateTime)}
+                            {formatExecutionDateTime(execution.startDateTime, timezone)}
                           </td>
                           <td className="p-3 text-sm text-muted-foreground">
                             {execution.endDateTime 
-                              ? formatExecutionDateTime(execution.endDateTime)
+                              ? formatExecutionDateTime(execution.endDateTime, timezone)
                               : <span className="text-muted-foreground/50">In progress...</span>}
                           </td>
                           <td className="p-3 text-sm">
@@ -674,7 +701,7 @@ export function BackupLogs() {
                     {logs.map((log) => (
                       <tr key={log.id} className="border-t hover:bg-muted/50">
                         <td className="p-3 text-sm text-muted-foreground">
-                          {formatDateTime(log.dateTime)}
+                          {formatDateTime(log.dateTime, timezone)}
                         </td>
                         <td className="p-3 text-sm">
                           <div className="max-w-md truncate" title={log.filePath}>

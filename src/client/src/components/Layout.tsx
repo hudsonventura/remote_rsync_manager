@@ -4,6 +4,7 @@ import { Sidebar } from "./Sidebar"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "./ThemeToggle"
 import { Notifications } from "./Notifications"
+import { TimezoneSelector } from "./TimezoneSelector"
 
 export function Layout() {
   const navigate = useNavigate()
@@ -45,6 +46,7 @@ export function Layout() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <TimezoneSelector />
             <Notifications />
             <ThemeToggle />
             <Button variant="outline" onClick={handleLogout}>
