@@ -170,6 +170,8 @@ public class LookController : ControllerBase
 
     private string? CalculateFileMd5(string filePath)
     {
+        return null; // Don't calculate MD5 for browsing (too slow)
+        
         try
         {
             using var md5 = MD5.Create();
