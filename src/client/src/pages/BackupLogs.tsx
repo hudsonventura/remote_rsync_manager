@@ -290,6 +290,8 @@ export function BackupLogs() {
         return "bg-red-500/20 text-red-600 dark:text-red-400"
       case "Ignored":
         return "bg-gray-500/20 text-gray-600 dark:text-gray-400"
+      case "Milestone":
+        return "bg-blue-500/20 text-blue-600 dark:text-blue-400"
       default:
         return "bg-muted text-muted-foreground"
     }
@@ -491,6 +493,7 @@ export function BackupLogs() {
                     <option value="Copy">Copy</option>
                     <option value="Delete">Delete</option>
                     <option value="Ignored">Ignored</option>
+                    <option value="Milestone">Milestone</option>
                   </select>
                 </div>
                 

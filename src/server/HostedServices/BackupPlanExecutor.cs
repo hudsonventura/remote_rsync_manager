@@ -68,6 +68,9 @@ public class BackupPlanExecutor
                 throw new InvalidOperationException($"Agent {agentFromDb.hostname} is not authenticated. Please pair the agent first.");
             }
 
+            // Log: Source analysis started
+            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "SourceAnalysisStarted", "Started analyzing source file structure");
+
             // Call the /Look endpoint to get file system items from source (remote agent)
             var sourceFileSystemItems = await CallLookEndpointAsync(agentFromDb, backupPlan.source);
 
@@ -95,6 +98,9 @@ public class BackupPlanExecutor
             // Delete files from destination that don't exist in source
             await DeleteFilesFromDestination(comparisonResult.DeletedItems, backupPlan.destination, backupPlan.id, executionId, logContext);
 
+            // Log: Copies started
+            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "CopiesStarted", "Started copying files from source to destination");
+
             // Copy files from source (agent) to destination
             await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, executionId, logContext, "Does not exist on destination"))
             {
@@ -105,6 +111,9 @@ public class BackupPlanExecutor
             {
                 _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
             }
+
+            // Log: Copies finished
+            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "CopiesFinished", "Finished copying files from source to destination");
 
             // Log files that were ignored (exist in both with same size)
             await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
@@ -1067,6 +1076,32 @@ public class BackupPlanExecutor
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to log file operation for {FileName}", item.Name);
+        }
+    }
+
+    private async Task LogMilestoneEvent(LogDbContext logContext, Guid backupPlanId, Guid executionId, string eventType, string description)
+    {
+        try
+        {
+            var logEntry = new LogEntry
+            {
+                id = Guid.NewGuid(),
+                backupPlanId = backupPlanId,
+                executionId = executionId,
+                datetime = DateTime.UtcNow,
+                fileName = "[SYSTEM]",
+                filePath = "",
+                size = null,
+                action = "Milestone",
+                reason = $"{eventType}: {description}"
+            };
+
+            logContext.LogEntries.Add(logEntry);
+            await logContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log milestone event: {EventType}", eventType);
         }
     }
 
