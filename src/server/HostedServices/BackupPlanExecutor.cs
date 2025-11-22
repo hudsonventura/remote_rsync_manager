@@ -806,14 +806,37 @@ public class BackupPlanExecutor
         }
     }
 
+    /// <summary>
+    /// Simulates a backup plan execution by creating execution logs without actually performing file operations.
+    /// This method creates BackupExecution and LogEntry records to show what would happen.
+    /// </summary>
     public async Task<SimulationResult> SimulateBackupPlanAsync(BackupPlan backupPlan, Agent agent)
     {
+        Guid executionId = Guid.Empty;
         try
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
+            var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
 
             _logger.LogInformation("Simulating backup plan {BackupPlanId} for agent {AgentHostname}", backupPlan.id, agent.hostname);
+
+            // Create backup execution record for simulation
+            var startDateTime = DateTime.UtcNow;
+            var executionName = $"{startDateTime:yyyy/MM/dd HH:mm} - Simulation - {backupPlan.name}";
+            var execution = new BackupExecution
+            {
+                id = Guid.NewGuid(),
+                backupPlanId = backupPlan.id,
+                name = executionName,
+                startDateTime = startDateTime
+            };
+            executionId = execution.id;
+            
+            logContext.BackupExecutions.Add(execution);
+            await logContext.SaveChangesAsync();
+
+            _logger.LogInformation("Created simulation execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
 
             // Reload agent from database to ensure we have the latest token
             var agentFromDb = await dbContext.Agents.FindAsync(agent.id);
@@ -854,11 +877,12 @@ public class BackupPlanExecutor
             var simulationResult = new SimulationResult();
             var allItems = new List<SimulationItem>();
 
-            // Process new items (to be copied)
+            // Process new items (to be copied) - create log entries
             foreach (var item in comparisonResult.NewItems)
             {
                 if (item.Type == "file") // Only show files, not directories
                 {
+                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", "Does not exist on destination");
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
@@ -870,28 +894,31 @@ public class BackupPlanExecutor
                 }
             }
 
-            // Process edited items (to be copied)
+            // Process edited items (to be copied) - create log entries
             foreach (var item in comparisonResult.EditedItems)
             {
                 if (item.Type == "file") // Only show files, not directories
                 {
                     var destItem = destinationFileSystemItems.FirstOrDefault(d => d.Name == item.Name);
+                    var reason = $"Changed on source (size: {destItem?.Size ?? 0} -> {item.Size})";
+                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", reason);
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
                         FilePath = item.Path,
                         Size = item.Size,
                         Action = "Copy",
-                        Reason = $"Changed on source (size: {destItem?.Size ?? 0} -> {item.Size})"
+                        Reason = reason
                     });
                 }
             }
 
-            // Process deleted items (to be deleted)
+            // Process deleted items (to be deleted) - create log entries
             foreach (var item in comparisonResult.DeletedItems)
             {
                 if (item.Type == "file") // Only show files, not directories
                 {
+                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Delete", "Does not exist on source");
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
@@ -903,6 +930,9 @@ public class BackupPlanExecutor
                 }
             }
 
+            // Log ignored files (files that exist in both with same size)
+            await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
+
             // Sort by action (Copy first, then Delete), then by filename
             allItems = allItems
                 .OrderBy(i => i.Action == "Delete") // Copy items first (false < true)
@@ -913,6 +943,10 @@ public class BackupPlanExecutor
             simulationResult.TotalItems = allItems.Count;
             simulationResult.ItemsToCopy = allItems.Count(i => i.Action == "Copy");
             simulationResult.ItemsToDelete = allItems.Count(i => i.Action == "Delete");
+
+            // Update execution end time
+            execution.endDateTime = DateTime.UtcNow;
+            await logContext.SaveChangesAsync();
 
             _logger.LogInformation(
                 "Simulation complete: {TotalCount} items, {CopyCount} to copy, {DeleteCount} to delete",
@@ -928,6 +962,7 @@ public class BackupPlanExecutor
                 {
                     await notificationService.CreateSimulationCompletedNotificationAsync(
                         backupPlan.id,
+                        executionId,
                         backupPlan.name,
                         simulationResult.TotalItems,
                         simulationResult.ItemsToCopy,
@@ -944,6 +979,27 @@ public class BackupPlanExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error simulating backup plan {BackupPlanId}", backupPlan.id);
+            
+            // Update execution end time even on error
+            if (executionId != Guid.Empty)
+            {
+                try
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    var execution = await logContext.BackupExecutions.FindAsync(executionId);
+                    if (execution != null)
+                    {
+                        execution.endDateTime = DateTime.UtcNow;
+                        await logContext.SaveChangesAsync();
+                    }
+                }
+                catch (Exception updateEx)
+                {
+                    _logger.LogWarning(updateEx, "Failed to update simulation execution end time for {ExecutionId}", executionId);
+                }
+            }
+            
             throw;
         }
     }

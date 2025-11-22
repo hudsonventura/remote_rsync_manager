@@ -7,7 +7,7 @@ namespace server.Services;
 public interface INotificationService
 {
     Task CreateBackupCompletedNotificationAsync(Guid backupPlanId, Guid executionId, string backupPlanName, bool success, string? errorMessage = null);
-    Task CreateSimulationCompletedNotificationAsync(Guid backupPlanId, string backupPlanName, int totalItems, int itemsToCopy, int itemsToDelete);
+    Task CreateSimulationCompletedNotificationAsync(Guid backupPlanId, Guid executionId, string backupPlanName, int totalItems, int itemsToCopy, int itemsToDelete);
 }
 
 public class NotificationService : INotificationService
@@ -52,7 +52,7 @@ public class NotificationService : INotificationService
         }
     }
 
-    public async Task CreateSimulationCompletedNotificationAsync(Guid backupPlanId, string backupPlanName, int totalItems, int itemsToCopy, int itemsToDelete)
+    public async Task CreateSimulationCompletedNotificationAsync(Guid backupPlanId, Guid executionId, string backupPlanName, int totalItems, int itemsToCopy, int itemsToDelete)
     {
         try
         {
@@ -63,6 +63,7 @@ public class NotificationService : INotificationService
                 title = $"Simulation Completed: {backupPlanName}",
                 message = $"Simulation for backup plan '{backupPlanName}' completed. Total items: {totalItems}, To copy: {itemsToCopy}, To delete: {itemsToDelete}",
                 backupPlanId = backupPlanId,
+                executionId = executionId,
                 isRead = false,
                 createdAt = DateTime.UtcNow
             };

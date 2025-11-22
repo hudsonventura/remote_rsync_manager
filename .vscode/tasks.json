@@ -38,7 +38,7 @@
     {
       "label": "client: stop",
       "type": "shell",
-      "command": "pkill -f 'vite' 2>/dev/null; pkill -f 'npm.*dev' 2>/dev/null; exit 0",
+      "command": "pkill -f 'vite'",
       "problemMatcher": [],
       "options": {
         "cwd": "${workspaceFolder}/src/client"
@@ -84,7 +84,7 @@
     {
       "label": "agent: run",
       "type": "shell",
-      "command": "dotnet run",
+      "command": "dotnet run --project src/agents/linux/agent.csproj",
       "isBackground": true,
       "problemMatcher": {
         "owner": "custom",
@@ -103,7 +103,7 @@
         }
       },
       "options": {
-        "cwd": "${workspaceFolder}/src/agents/linux"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "reveal": "always",
@@ -113,7 +113,7 @@
     {
       "label": "agent: stop",
       "type": "shell",
-      "command": "pkill -f 'agent' 2>/dev/null; pkill -f 'dotnet.*agent' 2>/dev/null; exit 0",
+      "command": "pkill -f 'agent'",
       "problemMatcher": [],
       "options": {
         "cwd": "${workspaceFolder}/src/agents/linux"
