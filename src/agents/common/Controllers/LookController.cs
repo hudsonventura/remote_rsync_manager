@@ -55,13 +55,91 @@ public class LookController : ControllerBase
             // Get directory info
             var directoryInfo = new DirectoryInfo(directoryPath);
             
-            // Get all items (directories and files) recursively in a single list
+            // Get only immediate children (non-recursive) - directories and files in current directory only
             var items = new List<FileSystemItem>();
 
             try
             {
-                // Recursively get all directories and files
-                GetAllDirectoriesAndFiles(directoryInfo, items);
+                // Get immediate subdirectories only (non-recursive)
+                DirectoryInfo[] subdirectories;
+                try
+                {
+                    subdirectories = directoryInfo.GetDirectories();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    _logger.LogWarning("Access denied to directory: {Path}", directoryPath);
+                    // Continue to get files even if we can't access subdirectories
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error getting subdirectories from: {Path}", directoryPath);
+                    // Continue to get files
+                }
+
+                // Add immediate subdirectories only
+                foreach (var dirInfo in directoryInfo.GetDirectories())
+                {
+                    try
+                    {
+                        items.Add(new FileSystemItem
+                        {
+                            Name = dirInfo.Name,
+                            Path = dirInfo.FullName,
+                            Type = "directory",
+                            Size = null,
+                            LastModified = dirInfo.LastWriteTimeUtc,
+                            Permissions = GetUnixPermissions(dirInfo.FullName)
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error processing subdirectory: {Path}", dirInfo.FullName);
+                        // Continue to next directory
+                    }
+                }
+
+                // Get files in current directory only
+                FileInfo[] files;
+                try
+                {
+                    files = directoryInfo.GetFiles();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    _logger.LogWarning("Access denied to files in directory: {Path}", directoryPath);
+                    files = Array.Empty<FileInfo>();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error getting files from: {Path}", directoryPath);
+                    files = Array.Empty<FileInfo>();
+                }
+
+                foreach (var fileInfo in files)
+                {
+                    try
+                    {
+                        // Calculate MD5 hash for the file
+                        var md5Hash = CalculateFileMd5(fileInfo.FullName);
+
+                        items.Add(new FileSystemItem
+                        {
+                            Name = fileInfo.Name,
+                            Path = fileInfo.FullName,
+                            Type = "file",
+                            Size = fileInfo.Length,
+                            LastModified = fileInfo.LastWriteTimeUtc,
+                            Permissions = GetUnixPermissions(fileInfo.FullName),
+                            Md5 = md5Hash
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error processing file: {Path}", fileInfo.FullName);
+                        // Continue to next file
+                    }
+                }
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -77,7 +155,7 @@ public class LookController : ControllerBase
             var dirCount = items.Count(i => i.Type == "directory");
             var fileCount = items.Count(i => i.Type == "file");
 
-            _logger.LogInformation("Listed directory: {Path}, {DirCount} directories, {FileCount} files", 
+            _logger.LogInformation("Listed directory (non-recursive): {Path}, {DirCount} directories, {FileCount} files", 
                 directoryPath, dirCount, fileCount);
 
             return Ok(items.OrderBy(i => i.Path));
@@ -89,93 +167,6 @@ public class LookController : ControllerBase
         }
     }
 
-    private void GetAllDirectoriesAndFiles(DirectoryInfo directory, List<FileSystemItem> items)
-    {
-        // Get immediate subdirectories
-        DirectoryInfo[] subdirectories;
-        try
-        {
-            subdirectories = directory.GetDirectories();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            _logger.LogWarning("Access denied to directory: {Path}", directory.FullName);
-            return;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting subdirectories from: {Path}", directory.FullName);
-            return;
-        }
-
-        foreach (var dirInfo in subdirectories)
-        {
-            try
-            {
-                items.Add(new FileSystemItem
-                {
-                    Name = dirInfo.Name,
-                    Path = dirInfo.FullName,
-                    Type = "directory",
-                    Size = null,
-                    LastModified = dirInfo.LastWriteTimeUtc,
-                    Permissions = GetUnixPermissions(dirInfo.FullName)
-                });
-
-                // Recursively process subdirectories - this is the key recursive call
-                GetAllDirectoriesAndFiles(dirInfo, items);
-            }
-            catch (Exception ex)
-            {
-                // Log but continue processing other directories
-                _logger.LogWarning(ex, "Error processing subdirectory: {Path}", dirInfo.FullName);
-                // Continue to next directory
-            }
-        }
-
-        // Get files in current directory
-        FileInfo[] files;
-        try
-        {
-            files = directory.GetFiles();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Can't read files, but we already processed subdirectories, so just return
-            return;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting files from: {Path}", directory.FullName);
-            return;
-        }
-
-        foreach (var fileInfo in files)
-        {
-            try
-            {
-                // Calculate MD5 hash for the file
-                var md5Hash = CalculateFileMd5(fileInfo.FullName);
-
-                items.Add(new FileSystemItem
-                {
-                    Name = fileInfo.Name,
-                    Path = fileInfo.FullName,
-                    Type = "file",
-                    Size = fileInfo.Length,
-                    LastModified = fileInfo.LastWriteTimeUtc,
-                    Permissions = GetUnixPermissions(fileInfo.FullName),
-                    Md5 = md5Hash
-                });
-            }
-            catch (Exception ex)
-            {
-                // Log but continue processing other files
-                _logger.LogWarning(ex, "Error processing file: {Path}", fileInfo.FullName);
-                // Continue to next file
-            }
-        }
-    }
 
     private string? CalculateFileMd5(string filePath)
     {

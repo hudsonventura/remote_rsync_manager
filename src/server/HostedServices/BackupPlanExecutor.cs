@@ -183,7 +183,7 @@ public class BackupPlanExecutor
     private async Task<List<FileSystemItem>> CallLookEndpointAsync(Agent agent, string sourcePath)
     {
         // Determine base URL - try HTTPS first, then HTTP
-        string baseUrl;
+        string baseUrl = string.Empty;
         var hostname = agent.hostname;
 
         if (hostname.StartsWith("http://"))
@@ -207,22 +207,60 @@ public class BackupPlanExecutor
                 var result = await TryCallLookEndpointAsync(testUrl, agent.token!);
                 if (result.Success && result.Items != null)
                 {
-                    return result.Items;
+                    baseUrl = protocol + hostname;
+                    break;
                 }
                 lastErrorMessage = result.ErrorMessage;
             }
-            throw new HttpRequestException($"Failed 3 to connect to agent at {agent.hostname}, trying to get https://{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}. Error: {lastErrorMessage}");
+            if (string.IsNullOrEmpty(baseUrl))
+            {
+                throw new HttpRequestException($"Failed 3 to connect to agent at {agent.hostname}, trying to get https://{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}. Error: {lastErrorMessage}");
+            }
         }
 
-        var lookUrl = $"{baseUrl}/Look?dir={Uri.EscapeDataString(sourcePath)}";
-        var response = await TryCallLookEndpointAsync(lookUrl, agent.token!);
+        // Recursively get all files and directories by calling /Look for each directory level
+        var allItems = new List<FileSystemItem>();
+        await GetDirectoryRecursivelyAsync(baseUrl, agent.token!, sourcePath, allItems);
+
+        return allItems;
+    }
+
+    private async Task GetDirectoryRecursivelyAsync(string baseUrl, string agentToken, string directoryPath, List<FileSystemItem> allItems)
+    {
+        var lookUrl = $"{baseUrl}/Look?dir={Uri.EscapeDataString(directoryPath)}";
+        var response = await TryCallLookEndpointAsync(lookUrl, agentToken);
 
         if (!response.Success)
         {
-            throw new HttpRequestException($"Failed to call /Look endpoint: {response.ErrorMessage}");
+            _logger.LogWarning("Failed to call /Look endpoint for {Path}: {Error}", directoryPath, response.ErrorMessage);
+            return;
         }
 
-        return response.Items ?? new List<FileSystemItem>();
+        if (response.Items == null || response.Items.Count == 0)
+        {
+            return;
+        }
+
+        // Process items from current directory
+        var directoriesToProcess = new List<string>();
+        
+        foreach (var item in response.Items)
+        {
+            // Add all items (files and directories) to the result
+            allItems.Add(item);
+
+            // If it's a directory, add it to the list to process recursively
+            if (item.Type == "directory")
+            {
+                directoriesToProcess.Add(item.Path);
+            }
+        }
+
+        // Recursively process subdirectories
+        foreach (var subDir in directoriesToProcess)
+        {
+            await GetDirectoryRecursivelyAsync(baseUrl, agentToken, subDir, allItems);
+        }
     }
 
     private async Task<(bool Success, List<FileSystemItem>? Items, string ErrorMessage)> TryCallLookEndpointAsync(string url, string agentToken)
@@ -240,7 +278,7 @@ public class BackupPlanExecutor
 
         using var httpClient = new HttpClient(httpClientHandler);
 
-        httpClient.Timeout = TimeSpan.FromMinutes(5); // Longer timeout for file system operations
+        httpClient.Timeout = TimeSpan.FromSeconds(30); // Timeout for individual directory listing (non-recursive, should be fast)
 
         // Add the authentication token header
         httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
