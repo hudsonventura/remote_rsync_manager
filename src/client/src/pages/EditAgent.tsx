@@ -36,6 +36,8 @@ export function EditAgent() {
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [agentToken, setAgentToken] = useState<string | null>(null)
   const [tokenCopied, setTokenCopied] = useState(false)
+  const [pairingCode, setPairingCode] = useState("")
+  const [isReconnecting, setIsReconnecting] = useState(false)
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -200,6 +202,53 @@ export function EditAgent() {
     }
   }
 
+  const handleReconnect = async () => {
+    if (!id) {
+      setError("Agent ID is required")
+      return
+    }
+
+    if (pairingCode.trim().length !== 6) {
+      setError("Pairing code must be exactly 6 digits")
+      return
+    }
+
+    setIsReconnecting(true)
+    setError(null)
+    setValidationMessage(null)
+
+    try {
+      const token = sessionStorage.getItem("token")
+      if (!token) {
+        navigate("/login")
+        return
+      }
+
+      const updatedAgent: Agent = await apiPost<Agent>(`/api/agent/${id}/reconnect`, {
+        pairingCode: pairingCode.trim(),
+      })
+
+      setAgentToken(updatedAgent.token || null)
+      setPairingCode("")
+      setValidationMessage("✓ Agent reconnected successfully! New token has been saved.")
+      setError(null)
+    } catch (err: any) {
+      if (err instanceof TypeError && err.message === "Failed to fetch") {
+        setError("Unable to connect to the server. Please make sure the backend is running.")
+      } else {
+        let errorMessage = "Failed to reconnect agent"
+        if (err?.message) {
+          errorMessage = err.message
+        } else if (typeof err === 'string') {
+          errorMessage = err
+        }
+        setError(errorMessage)
+      }
+    } finally {
+      setIsReconnecting(false)
+    }
+  }
+
   if (isLoadingData) {
     return (
       <div className="space-y-6">
@@ -308,6 +357,35 @@ export function EditAgent() {
             </div>
             <p className="text-sm text-muted-foreground">
               The authentication token used to communicate with this agent. This token is sent in the X-Agent-Token header.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="pairingCode">Reconnect with Pairing Code</Label>
+            <div className="flex gap-2">
+              <Input
+                id="pairingCode"
+                type="text"
+                placeholder="123456"
+                value={pairingCode}
+                onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                disabled={isReconnecting || isLoading || isValidating}
+                className="max-w-md"
+                maxLength={6}
+                minLength={6}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleReconnect}
+                disabled={isReconnecting || isLoading || isValidating || pairingCode.trim().length !== 6}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isReconnecting ? "animate-spin" : ""}`} />
+                {isReconnecting ? "Reconnecting..." : "Reconnect"}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Enter the 6-digit pairing code displayed in the agent's console to reconnect and generate a new authentication token.
             </p>
           </div>
 

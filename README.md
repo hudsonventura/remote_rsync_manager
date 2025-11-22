@@ -176,8 +176,8 @@ The agent generates an authorization code required to connect to it. This adds a
    - **Description**: Optional description of what this backup plan does
    - **Schedule**: Enter a cron expression (e.g., `0 0 * * *` for daily at midnight)
      - Use the description below the field to see what the cron expression means
-   - **Source Path**: Click the folder icon to browse and select the source directory on the agent. The text field is open to you create another dir.
-   - **Destination Path**: Click the folder icon to browse and select the destination directory on the server. The text field is open to you create another dir.
+   - **Source Path (Agent)**: Click the folder icon to browse and select the source directory on the agent. The text field is open to you create another dir.
+   - **Destination Path (Server)**: Click the folder icon to browse and select the destination directory on the server. The text field is open to you create another dir.
    - **Active**: Check this box to enable automatic backups according to the schedule. If it’s disabled, backups won’t start automatically; however, you can still run them manually
 
 ![Agent Code](assets/backupplan_chose_dir.png)

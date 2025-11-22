@@ -194,6 +194,62 @@ public class AgentController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/reconnect")]
+    [ProducesResponseType(typeof(Agent), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ReconnectAgent(Guid id, [FromBody] ReconnectAgentRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.PairingCode))
+        {
+            return BadRequest(new { message = "Pairing code is required" });
+        }
+
+        var agent = await _context.Agents.FindAsync(id);
+        if (agent == null)
+        {
+            return NotFound(new { message = "Agent not found" });
+        }
+
+        var hostname = agent.hostname;
+        var pairingCode = request.PairingCode.Trim();
+
+        // Ping the agent to verify it's reachable
+        var validationResult = await PingAgent(hostname);
+        if (!validationResult.Success)
+        {
+            return StatusCode(503, new { 
+                message = validationResult.ErrorMessage
+            });
+        }
+
+        // Verify pairing code and get agent token
+        var pairingResult = await VerifyPairingCode(hostname, pairingCode);
+        if (!pairingResult.Success)
+        {
+            return StatusCode(400, new { 
+                message = pairingResult.ErrorMessage
+            });
+        }
+
+        var agentToken = pairingResult.Token;
+        if (string.IsNullOrEmpty(agentToken))
+        {
+            return StatusCode(500, new { 
+                message = "Failed to generate agent token after pairing verification"
+            });
+        }
+
+        // Update agent token
+        agent.token = agentToken;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Agent {AgentId} reconnected successfully with new token", agent.id);
+
+        return Ok(agent);
+    }
+
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(Agent), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -676,6 +732,24 @@ public class AgentController : ControllerBase
     private class ErrorResponse
     {
         public string? Message { get; set; }
+    }
+
+    public class ReconnectAgentRequest
+    {
+        public string PairingCode { get; set; } = string.Empty;
+    }
+
+    public class CreateAgentRequest
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Hostname { get; set; } = string.Empty;
+        public string PairingCode { get; set; } = string.Empty;
+    }
+
+    public class UpdateAgentRequest
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Hostname { get; set; } = string.Empty;
     }
 }
 

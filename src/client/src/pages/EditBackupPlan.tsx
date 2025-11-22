@@ -343,7 +343,7 @@ export function EditBackupPlan() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="source">Source Path *</Label>
+            <Label htmlFor="source">Source Path  (Agent)</Label>
             <div className="flex gap-2">
               <Input
                 id="source"
@@ -373,7 +373,7 @@ export function EditBackupPlan() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="destination">Destination Path *</Label>
+            <Label htmlFor="destination">Destination Path (Server)</Label>
             <div className="flex gap-2">
               <Input
                 id="destination"
