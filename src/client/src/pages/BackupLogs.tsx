@@ -53,29 +53,7 @@ function formatDateTime(dateTime: string, timezone: string = "UTC"): string {
 }
 
 function formatExecutionDateTime(dateTime: string, timezone: string = "UTC"): string {
-  try {
-    const date = new Date(dateTime)
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: timezone
-    }).format(date) + ` (${timezone})`
-  } catch (err) {
-    const date = new Date(dateTime)
-    return date.toLocaleString('en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }) + ' UTC'
-  }
+  return formatDateTimeWithTimezone(dateTime, timezone)
 }
 
 export function BackupLogs() {

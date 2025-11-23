@@ -732,11 +732,31 @@ export function TimezoneSelector() {
   )
 }
 
+// Helper function to ensure datetime string is treated as UTC
+function ensureUTC(dateTime: string): string {
+  // If the string already has a timezone indicator (Z or +/- offset), return as is
+  if (dateTime.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(dateTime)) {
+    return dateTime
+  }
+  // Otherwise, append 'Z' to indicate UTC
+  return dateTime + 'Z'
+}
+
 // Helper function to format datetime with timezone
 export function formatDateTimeWithTimezone(dateTime: string, timezone: string = "UTC"): string {
   try {
-    const date = new Date(dateTime)
-    return new Intl.DateTimeFormat('en-US', {
+    // Ensure the datetime string is treated as UTC
+    // If it doesn't have a timezone indicator, append 'Z' to indicate UTC
+    const utcDateTime = ensureUTC(dateTime)
+    const date = new Date(utcDateTime)
+    
+    // Verify the date is valid
+    if (isNaN(date.getTime())) {
+      throw new Error('Invalid date')
+    }
+    
+    // Format the date in the specified timezone
+    const formatted = new Intl.DateTimeFormat('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -745,19 +765,28 @@ export function formatDateTimeWithTimezone(dateTime: string, timezone: string = 
       second: '2-digit',
       hour12: false,
       timeZone: timezone
-    }).format(date) + ` (${timezone})`
+    }).format(date)
+    
+    return formatted + ` (${timezone})`
   } catch (err) {
     // Fallback to UTC if timezone is invalid
-    const date = new Date(dateTime)
-    return date.toLocaleString('en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }) + ' UTC'
+    try {
+      const utcDateTime = ensureUTC(dateTime)
+      const date = new Date(utcDateTime)
+      const formatted = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZone: 'UTC'
+      }).format(date)
+      return formatted + ' UTC'
+    } catch {
+      // Last resort: return the original string
+      return dateTime
+    }
   }
 }
