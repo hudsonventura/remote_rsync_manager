@@ -520,7 +520,7 @@ public class BackupPlanExecutor
         public List<FileSystemItem> NewItems { get; set; } = new();
         public List<FileSystemItem> EditedItems { get; set; } = new();
         public List<FileSystemItem> DeletedItems { get; set; } = new();
-
+        public List<FileSystemItem> TransferredItems { get; set; } = new();
 
     }
 
@@ -559,6 +559,7 @@ public class BackupPlanExecutor
         result.NewItems = sourceItems.Where(s => !destinationItems.Any(d => d.Name == s.Name)).ToList();
         result.DeletedItems = destinationItems.Where(d => !sourceItems.Any(s => s.Name == d.Name)).ToList();
         result.EditedItems = sourceItems.Where(s => destinationItems.Any(d => d.Name == s.Name && d.Size != s.Size)).ToList();
+        result.TransferredItems = sourceItems.Where(s => destinationItems.Any(d => d.Name == s.Name && d.Size == s.Size && s.Path != d.Path)).ToList();
 
         //dest   "1476 Lisa Manuel - O Raptor da Meia-Noite (Julia Hist 1476).doc"
         //source "1476 Lisa Manuel - O Raptor da Meia-Noite (Julia Hist 1476).doc"
