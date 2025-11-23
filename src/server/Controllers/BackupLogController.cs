@@ -336,7 +336,9 @@ public class BackupLogController : ControllerBase
                 DeletedCount = deletedCount,
                 DurationSeconds = durationSeconds,
                 AverageSpeedBytesPerSecond = averageSpeedBytesPerSecond,
-                Status = status
+                Status = status,
+                CurrentFileName = execution.currentFileName,
+                CurrentFilePath = execution.currentFilePath
             };
 
             return Ok(stats);
@@ -393,6 +395,8 @@ public class ExecutionStatsResponse
     public double? DurationSeconds { get; set; }
     public double? AverageSpeedBytesPerSecond { get; set; }
     public string Status { get; set; } = "Unknown";
+    public string? CurrentFileName { get; set; }
+    public string? CurrentFilePath { get; set; }
 }
 
 

@@ -48,6 +48,8 @@ interface ExecutionStats {
   durationSeconds: number | null
   averageSpeedBytesPerSecond: number | null
   status: string
+  currentFileName: string | null
+  currentFilePath: string | null
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -658,6 +660,25 @@ export function BackupLogs() {
                   })()}
                 </div>
               </div>
+              
+              {/* Current File Being Processed */}
+              {executionStats.currentFileName && executionStats.status !== "Finished" && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Currently Processing</p>
+                    <div className="space-y-1">
+                      <p className="text-lg font-semibold text-blue-600 dark:text-blue-400">
+                        {executionStats.currentFileName}
+                      </p>
+                      {executionStats.currentFilePath && (
+                        <p className="text-sm text-muted-foreground truncate" title={executionStats.currentFilePath}>
+                          {executionStats.currentFilePath}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

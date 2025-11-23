@@ -118,8 +118,10 @@ public class BackupPlanExecutor
             // Log files that were ignored (exist in both with same size)
             await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
 
-            // Update execution end time
+            // Update execution end time and clear current file
             execution.endDateTime = DateTime.UtcNow;
+            execution.currentFileName = null;
+            execution.currentFilePath = null;
             await logContext.SaveChangesAsync();
 
             _logger.LogInformation("Backup plan {BackupPlanId} execution completed successfully", backupPlan.id);
@@ -623,6 +625,22 @@ public class BackupPlanExecutor
 
         foreach (var item in itemsToDelete)
         {
+            // Update current file being processed
+            try
+            {
+                var execution = await logContext.BackupExecutions.FindAsync(executionId);
+                if (execution != null)
+                {
+                    execution.currentFileName = Path.GetFileName(item.Path);
+                    execution.currentFilePath = item.Path;
+                    await logContext.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
+            }
+
             try
             {
                 if (item.Type == "file" && System.IO.File.Exists(item.Path))
@@ -697,6 +715,22 @@ public class BackupPlanExecutor
             if (sourceItem.Type != "file")
             {
                 continue;
+            }
+
+            // Update current file being processed
+            try
+            {
+                var execution = await logContext.BackupExecutions.FindAsync(executionId);
+                if (execution != null)
+                {
+                    execution.currentFileName = Path.GetFileName(sourceItem.Path);
+                    execution.currentFilePath = sourceItem.Path;
+                    await logContext.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
             }
 
             // Calculate destination path

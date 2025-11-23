@@ -10,5 +10,7 @@ public class BackupExecution
     public string name { get; set; } = string.Empty;
     public DateTime startDateTime { get; set; } = DateTime.UtcNow;
     public DateTime? endDateTime { get; set; }
+    public string? currentFileName { get; set; }
+    public string? currentFilePath { get; set; }
 }
 
