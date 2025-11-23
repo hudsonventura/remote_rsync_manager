@@ -28,7 +28,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "agent console: build",
-      "program": "${workspaceFolder}/src/agents/linux/bin/Debug/net10.0/agent.dll",
+      "program": "${workspaceFolder}/src/agents/cli/bin/Debug/net10.0/agent.dll",
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
@@ -41,11 +41,11 @@
       }
     },
     {
-      "name": "Agent Windows",
+      "name": "Agent Desktop",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "agent windows: build",
-      "program": "${workspaceFolder}/src/agents/windows/bin/Debug/net10.0/agentWindows.dll",
+      "preLaunchTask": "agent desktop: build",
+      "program": "${workspaceFolder}/src/agents/desktop/bin/Debug/net10.0/agentDesktop.dll",
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,

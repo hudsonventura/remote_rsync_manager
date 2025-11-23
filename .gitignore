@@ -14,13 +14,11 @@ src/server/logs.db*
 # Data directory
 data/
 
-# Agent SQLite database
-src/agents/linux/agent.db*
-src/agents/linux/obj/*
-src/agents/linux/bin/*
-
-src/agents/windows/obj/*
-src/agents/windows/bin/*
+# Agents
+src/agents/cli/obj/*
+src/agents/cli/bin/*
+src/agents/desktop/obj/*
+src/agents/desktop/bin/*
 
 src/agents/common/obj/*
 src/agents/common/bin/*

@@ -68,23 +68,23 @@
       "problemMatcher": [],
       "command": "dotnet build --configuration Debug",
       "options": {
-        "cwd": "${workspaceFolder}/src/agents/windows"
+        "cwd": "${workspaceFolder}/src/agents/desktop"
       },
-      "label": "agent windows: build"
+      "label": "agent desktop: build"
     },
     {
       "type": "shell",
       "problemMatcher": [],
       "command": "dotnet build --configuration Debug",
       "options": {
-        "cwd": "${workspaceFolder}/src/agents/linux"
+        "cwd": "${workspaceFolder}/src/agents/cli"
       },
       "label": "agent console: build"
     },
     {
       "label": "agent: run",
       "type": "shell",
-      "command": "dotnet run --project src/agents/linux/agent.csproj",
+      "command": "dotnet run --project src/agents/cli/agent.csproj",
       "isBackground": true,
       "problemMatcher": {
         "owner": "custom",
@@ -116,7 +116,7 @@
       "command": "pkill -f 'agent'",
       "problemMatcher": [],
       "options": {
-        "cwd": "${workspaceFolder}/src/agents/linux"
+        "cwd": "${workspaceFolder}/src/agents/cli"
       }
     },
   ]
