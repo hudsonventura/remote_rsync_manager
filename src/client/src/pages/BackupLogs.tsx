@@ -616,9 +616,7 @@ export function BackupLogs() {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Average Transfer Speed</p>
                   <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                    {executionStats.endDateTime
-                      ? formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)
-                      : "Calculating..."}
+                    {formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)}
                   </p>
                 </div>
               </div>

@@ -254,17 +254,30 @@ public class BackupLogController : ControllerBase
             var totalSize = copyLogs.Sum(l => l.size ?? 0);
             var fileCount = copyLogs.Count;
 
-            // Calculate duration in seconds
+            // Calculate duration in seconds and average speed
             double? durationSeconds = null;
             double? averageSpeedBytesPerSecond = null;
 
             if (execution.endDateTime.HasValue)
             {
+                // Backup finished - use actual duration
                 var duration = execution.endDateTime.Value - execution.startDateTime;
                 durationSeconds = duration.TotalSeconds;
 
                 // Calculate average speed (bytes per second)
                 if (durationSeconds > 0)
+                {
+                    averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
+                }
+            }
+            else
+            {
+                // Backup in progress - calculate real-time speed
+                var currentDuration = DateTime.UtcNow - execution.startDateTime;
+                durationSeconds = currentDuration.TotalSeconds;
+
+                // Calculate current average speed based on elapsed time
+                if (durationSeconds > 0 && totalSize > 0)
                 {
                     averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
                 }
@@ -322,7 +335,11 @@ public class BackupLogController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving execution stats for backup plan {BackupPlanId}, execution {ExecutionId}", id, executionId);
-            return StatusCode(500, new { message = "An error occurred while retrieving execution stats", error = ex.Message });
+            return StatusCode(500, new
+            {
+                message = "An error occurred while retrieving execution stats",
+                error = ex.Message
+            });
         }
     }
 }
