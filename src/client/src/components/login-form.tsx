@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { apiPost, API_URL } from "@/lib/api"
+import { apiPost, apiGet, API_URL } from "@/lib/api"
 
 interface AuthResponse {
   token: string
@@ -15,7 +15,7 @@ interface AuthResponse {
 
 export function LoginForm() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState("")
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | React.ReactNode | null>(null)
@@ -27,7 +27,7 @@ export function LoginForm() {
 
     try {
       const data: AuthResponse = await apiPost<AuthResponse>("/login", {
-        email,
+        username,
         password,
       })
       
@@ -35,6 +35,20 @@ export function LoginForm() {
       sessionStorage.setItem("token", data.token)
       sessionStorage.setItem("email", data.email)
       sessionStorage.setItem("expiresAt", data.expiresAt)
+
+      // Load user preferences
+      try {
+        const userData = await apiGet<{ timezone?: string; theme?: string }>("/api/users/me")
+        if (userData.timezone) {
+          sessionStorage.setItem("selectedTimezone", userData.timezone)
+        }
+        if (userData.theme) {
+          localStorage.setItem("remember-ui-theme", userData.theme)
+        }
+      } catch (err) {
+        // If fetching preferences fails, continue with defaults
+        console.warn("Failed to load user preferences:", err)
+      }
 
       // Redirect to home page
       navigate("/")
@@ -103,7 +117,7 @@ export function LoginForm() {
         />
         <h1 className="text-2xl font-bold">Login</h1>
         <p className="text-balance text-muted-foreground">
-          Enter your email below to login to your account
+          Enter your username below to login to your account
         </p>
       </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
@@ -113,13 +127,13 @@ export function LoginForm() {
           </div>
         )}
         <div className="flex flex-col gap-2">
-          <Label htmlFor="email">Email</Label>
+          <Label htmlFor="username">Username</Label>
           <Input
-            id="email"
-            type="email"
-            placeholder="m@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            id="username"
+            type="text"
+            placeholder="admin"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             required
             disabled={isLoading}
           />

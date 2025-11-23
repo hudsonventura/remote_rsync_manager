@@ -14,6 +14,7 @@ import { BackupPlansList } from "@/pages/BackupPlansList"
 import { EditBackupPlan } from "@/pages/EditBackupPlan"
 import { BackupLogs } from "@/pages/BackupLogs"
 import { About } from "@/pages/About"
+import { Users } from "@/pages/Users"
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
           <Route path="/backup-plans/:planId/logs" element={<BackupLogs />} />
           <Route path="/backup-plans/:planId/logs/:executionId" element={<BackupLogs />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/users" element={<Users />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/about" element={<About />} />
         </Route>

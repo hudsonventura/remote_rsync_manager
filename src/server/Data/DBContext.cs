@@ -39,6 +39,7 @@ public class DBContext : DbContext
     public DbSet<JwtConfig> JwtConfigs { get; set; } = null!;
     public DbSet<AppSettings> AppSettings { get; set; } = null!;
     public DbSet<Notification> Notifications { get; set; } = null!;
+    public DbSet<User> Users { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,6 +87,22 @@ public class DBContext : DbContext
             
             // Create index on createdAt and isRead for faster queries
             entity.HasIndex(e => new { e.createdAt, e.isRead });
+        });
+
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.HasKey(e => e.id);
+            entity.Property(e => e.id).ValueGeneratedNever();
+            entity.Property(e => e.username).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.email).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.passwordHash).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.createdAt).IsRequired();
+            entity.Property(e => e.timezone).HasMaxLength(100);
+            entity.Property(e => e.theme).HasMaxLength(50);
+            
+            // Create unique index on username and email
+            entity.HasIndex(e => e.username).IsUnique();
+            entity.HasIndex(e => e.email).IsUnique();
         });
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { apiGet, apiPut } from "@/lib/api"
 
 // All Linux timezones in alphabetical order
 const ALL_TIMEZONES = [
@@ -632,14 +633,29 @@ export function TimezoneSelector() {
   const [searchQuery, setSearchQuery] = useState("")
 
   useEffect(() => {
-    // Load timezone from sessionStorage or default to UTC
-    const saved = sessionStorage.getItem("selectedTimezone")
-    if (saved && ALL_TIMEZONES.includes(saved)) {
-      setSelectedTimezone(saved)
-    } else {
-      setSelectedTimezone("UTC")
-      sessionStorage.setItem("selectedTimezone", "UTC")
+    // Load timezone from user profile or sessionStorage or default to UTC
+    const loadTimezone = async () => {
+      try {
+        const userData = await apiGet<{ timezone?: string }>("/api/users/me")
+        if (userData.timezone && ALL_TIMEZONES.includes(userData.timezone)) {
+          setSelectedTimezone(userData.timezone)
+          sessionStorage.setItem("selectedTimezone", userData.timezone)
+          return
+        }
+      } catch (err) {
+        console.warn("Failed to load user timezone:", err)
+      }
+
+      // Fallback to sessionStorage or default
+      const saved = sessionStorage.getItem("selectedTimezone")
+      if (saved && ALL_TIMEZONES.includes(saved)) {
+        setSelectedTimezone(saved)
+      } else {
+        setSelectedTimezone("UTC")
+        sessionStorage.setItem("selectedTimezone", "UTC")
+      }
     }
+    loadTimezone()
   }, [])
 
   useEffect(() => {
@@ -647,6 +663,16 @@ export function TimezoneSelector() {
     sessionStorage.setItem("selectedTimezone", selectedTimezone)
     // Trigger event to notify components that timezone changed
     window.dispatchEvent(new CustomEvent('timezoneChanged', { detail: selectedTimezone }))
+    
+    // Save to user profile
+    const saveTimezone = async () => {
+      try {
+        await apiPut("/api/users/me/preferences", { timezone: selectedTimezone })
+      } catch (err) {
+        console.warn("Failed to save timezone preference:", err)
+      }
+    }
+    saveTimezone()
   }, [selectedTimezone])
 
   const filteredTimezones = ALL_TIMEZONES.filter(tz => 

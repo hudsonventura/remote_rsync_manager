@@ -2,6 +2,7 @@ import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "next-themes"
+import { apiPut } from "@/lib/api"
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
@@ -10,6 +11,20 @@ export function ThemeToggle() {
   React.useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Save theme preference to user profile when theme changes
+  React.useEffect(() => {
+    if (mounted && theme) {
+      const saveTheme = async () => {
+        try {
+          await apiPut("/api/users/me/preferences", { theme })
+        } catch (err) {
+          console.warn("Failed to save theme preference:", err)
+        }
+      }
+      saveTheme()
+    }
+  }, [theme, mounted])
 
   if (!mounted) {
     return (

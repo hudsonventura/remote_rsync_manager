@@ -23,11 +23,11 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var user = await _authService.ValidateUserAsync(request.Email, request.Password);
+        var user = await _authService.ValidateUserAsync(request.Username, request.Password);
         
         if (user == null)
         {
-            return Unauthorized(new { message = "Invalid email or password" });
+            return Unauthorized(new { message = "Invalid username or password" });
         }
 
         var token = _jwtService.GenerateToken(user);
@@ -40,11 +40,11 @@ public class AuthController : ControllerBase
         var expiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes);
 
         // Store the token in the static list
-        _tokenStore.StoreToken(token, expiresAt, user.Email);
+        _tokenStore.StoreToken(token, expiresAt, user.email);
 
         var response = new AuthResponse(
             Token: token,
-            Email: user.Email,
+            Email: user.email,
             ExpiresAt: expiresAt
         );
 

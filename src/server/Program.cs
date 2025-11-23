@@ -250,6 +250,28 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
     secretKey = jwtConfig.secretKey;
     issuer = jwtConfig.issuer;
     audience = jwtConfig.audience;
+
+    // Seed default admin user if it doesn't exist
+    var adminUser = dbContext.Users.FirstOrDefault(u => u.username == "admin");
+    if (adminUser == null)
+    {
+        var adminPasswordHash = AuthService.HashPassword("admin");
+        adminUser = new User
+        {
+            id = Guid.NewGuid(),
+            username = "admin",
+            email = "admin@remember.local",
+            passwordHash = adminPasswordHash,
+            isAdmin = true,
+            isActive = true,
+            createdAt = DateTime.UtcNow
+        };
+
+        dbContext.Users.Add(adminUser);
+        dbContext.SaveChanges();
+
+        Console.WriteLine("Default admin user created. Username: admin, Password: admin");
+    }
 }
 
 builder.Services.AddAuthentication(options =>

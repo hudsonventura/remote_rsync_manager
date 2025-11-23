@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "./ThemeToggle"
 import { Notifications } from "./Notifications"
 import { TimezoneSelector } from "./TimezoneSelector"
+import { apiGet } from "@/lib/api"
+import { useTheme } from "next-themes"
 
 export function Layout() {
   const navigate = useNavigate()
   const [email, setEmail] = useState<string | null>(null)
+  const { setTheme } = useTheme()
 
   useEffect(() => {
     // Check if user is authenticated
@@ -22,7 +25,26 @@ export function Layout() {
     }
 
     setEmail(userEmail)
-  }, [navigate])
+
+    // Load user preferences
+    const loadPreferences = async () => {
+      try {
+        const userData = await apiGet<{ timezone?: string; theme?: string }>("/api/users/me")
+        if (userData.timezone) {
+          sessionStorage.setItem("selectedTimezone", userData.timezone)
+          // Trigger timezone change event
+          window.dispatchEvent(new CustomEvent('timezoneChanged', { detail: userData.timezone }))
+        }
+        if (userData.theme) {
+          localStorage.setItem("remember-ui-theme", userData.theme)
+          setTheme(userData.theme)
+        }
+      } catch (err) {
+        console.warn("Failed to load user preferences:", err)
+      }
+    }
+    loadPreferences()
+  }, [navigate, setTheme])
 
   const handleLogout = () => {
     sessionStorage.removeItem("token")

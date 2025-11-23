@@ -1,44 +1,48 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
+using server.Data;
 using server.Models;
 
 namespace server.Services;
 
 public class AuthService : IAuthService
 {
-    // In-memory user store for demo purposes
-    // In production, replace this with a database
-    private readonly List<User> _users = new()
-    {
-        new User
-        {
-            Id = 1,
-            Email = "user@example.com",
-            PasswordHash = HashPassword("password123") // password: password123
-        }
-    };
+    private readonly DBContext _dbContext;
 
-    public Task<User?> ValidateUserAsync(string email, string password)
+    public AuthService(DBContext dbContext)
     {
-        var user = _users.FirstOrDefault(u => u.Email == email);
+        _dbContext = dbContext;
+    }
+
+    public async Task<User?> ValidateUserAsync(string username, string password)
+    {
+        var user = await _dbContext.Users
+            .FirstOrDefaultAsync(u => (u.username == username || u.email == username) && u.isActive);
         
         if (user == null)
-            return Task.FromResult<User?>(null);
+            return null;
 
         var passwordHash = HashPassword(password);
-        if (user.PasswordHash != passwordHash)
-            return Task.FromResult<User?>(null);
+        if (user.passwordHash != passwordHash)
+            return null;
 
-        return Task.FromResult<User?>(user);
+        return user;
     }
 
-    public Task<User?> GetUserByEmailAsync(string email)
+    public async Task<User?> GetUserByEmailAsync(string email)
     {
-        var user = _users.FirstOrDefault(u => u.Email == email);
-        return Task.FromResult<User?>(user);
+        return await _dbContext.Users
+            .FirstOrDefaultAsync(u => u.email == email && u.isActive);
     }
 
-    private static string HashPassword(string password)
+    public async Task<User?> GetUserByUsernameAsync(string username)
+    {
+        return await _dbContext.Users
+            .FirstOrDefaultAsync(u => u.username == username && u.isActive);
+    }
+
+    public static string HashPassword(string password)
     {
         using var sha256 = SHA256.Create();
         var hashedBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
