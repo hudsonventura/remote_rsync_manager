@@ -149,6 +149,9 @@ function getStatusDisplay(status: string): { icon: React.ReactNode; color: strin
 }
 
 export function BackupLogs() {
+  // Sleep for 1 second
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const navigate = useNavigate()
   const { planId, executionId } = useParams<{ planId: string; executionId?: string }>()
   const [backupPlan, setBackupPlan] = useState<BackupPlan | null>(null)
@@ -343,6 +346,8 @@ export function BackupLogs() {
         const statsData: ExecutionStats = await apiGet<ExecutionStats>(
           `/api/backupplan/${planId}/executions/${executionId}/stats`
         )
+        // Sleep for 1 second
+        await sleep(1000);
         setExecutionStats(statsData)
       } catch (err) {
         console.error("Error fetching execution stats:", err)
