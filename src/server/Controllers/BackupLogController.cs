@@ -250,6 +250,13 @@ public class BackupLogController : ControllerBase
                 .Where(log => log.executionId == executionId && log.action == "Copy")
                 .ToListAsync();
 
+            // Get ignored and deleted counts
+            var ignoredCount = await _logContext.LogEntries
+                .CountAsync(log => log.executionId == executionId && log.action == "Ignored");
+            
+            var deletedCount = await _logContext.LogEntries
+                .CountAsync(log => log.executionId == executionId && log.action == "Delete");
+
             // Calculate total size (only for Copy actions)
             var totalSize = copyLogs.Sum(l => l.size ?? 0);
             var fileCount = copyLogs.Count;
@@ -325,6 +332,8 @@ public class BackupLogController : ControllerBase
                 EndDateTime = execution.endDateTime,
                 TotalSize = totalSize,
                 FileCount = fileCount,
+                IgnoredCount = ignoredCount,
+                DeletedCount = deletedCount,
                 DurationSeconds = durationSeconds,
                 AverageSpeedBytesPerSecond = averageSpeedBytesPerSecond,
                 Status = status
@@ -379,6 +388,8 @@ public class ExecutionStatsResponse
     public DateTime? EndDateTime { get; set; }
     public long TotalSize { get; set; }
     public int FileCount { get; set; }
+    public int IgnoredCount { get; set; }
+    public int DeletedCount { get; set; }
     public double? DurationSeconds { get; set; }
     public double? AverageSpeedBytesPerSecond { get; set; }
     public string Status { get; set; } = "Unknown";

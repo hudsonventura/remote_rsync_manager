@@ -43,6 +43,8 @@ interface ExecutionStats {
   endDateTime: string | null
   totalSize: number
   fileCount: number
+  ignoredCount: number
+  deletedCount: number
   durationSeconds: number | null
   averageSpeedBytesPerSecond: number | null
   status: string
@@ -616,14 +618,22 @@ export function BackupLogs() {
                   )
                 })()}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Total Data Transferred</p>
                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalSize)}</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Copied</p>
+                  <p className="text-sm text-muted-foreground">Files Transfered</p>
                   <p className="text-2xl font-bold">{executionStats.fileCount.toLocaleString()}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Files Ignored</p>
+                  <p className="text-2xl font-bold">{executionStats.ignoredCount?.toLocaleString() ?? 0}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Files Deleted</p>
+                  <p className="text-2xl font-bold">{executionStats.deletedCount?.toLocaleString() ?? 0}</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Duration</p>
