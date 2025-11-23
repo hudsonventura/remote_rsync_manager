@@ -59,15 +59,28 @@ function formatFileSize(bytes: number | null): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
-function formatTransferSpeed(bytesPerSecond: number | null): string {
-  if (bytesPerSecond === null || bytesPerSecond === undefined) return "N/A"
-  if (bytesPerSecond === 0) return "0 B/s"
+function formatTransferSpeed(bytesPerSecond: number | null): { bytes: string; bits: string } {
+  if (bytesPerSecond === null || bytesPerSecond === undefined) {
+    return { bytes: "N/A", bits: "N/A" }
+  }
+  if (bytesPerSecond === 0) {
+    return { bytes: "0 B/s", bits: "0 b/s" }
+  }
 
-  const k = 1024
-  const sizes = ["B/s", "KB/s", "MB/s", "GB/s"]
-  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
+  // Format bytes per second (using base 1024)
+  const kBytes = 1024
+  const byteSizes = ["B/s", "KB/s", "MB/s", "GB/s"]
+  const byteIndex = Math.floor(Math.log(bytesPerSecond) / Math.log(kBytes))
+  const bytesFormatted = `${parseFloat((bytesPerSecond / Math.pow(kBytes, byteIndex)).toFixed(2))} ${byteSizes[byteIndex]}`
 
-  return `${parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
+  // Format bits per second (using base 1000)
+  const bitsPerSecond = bytesPerSecond * 8
+  const kBits = 1000
+  const bitSizes = ["b/s", "Kb/s", "Mb/s", "Gb/s"]
+  const bitIndex = Math.floor(Math.log(bitsPerSecond) / Math.log(kBits))
+  const bitsFormatted = `${parseFloat((bitsPerSecond / Math.pow(kBits, bitIndex)).toFixed(2))} ${bitSizes[bitIndex]}`
+
+  return { bytes: bytesFormatted, bits: bitsFormatted }
 }
 
 function formatDuration(seconds: number | null): string {
@@ -615,9 +628,19 @@ export function BackupLogs() {
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Average Transfer Speed</p>
-                  <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                    {formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)}
-                  </p>
+                  {(() => {
+                    const speed = formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)
+                    return (
+                      <div className="space-y-0.5">
+                        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {speed.bytes}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          ({speed.bits})
+                        </p>
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             </div>
