@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2 } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2, Loader2 } from "lucide-react"
 import { apiGet } from "@/lib/api"
 import { formatDateTimeWithTimezone } from "@/components/TimezoneSelector"
 
@@ -37,15 +37,53 @@ interface BackupExecution {
   endDateTime: string | null
 }
 
+interface ExecutionStats {
+  executionId: string
+  startDateTime: string
+  endDateTime: string | null
+  totalSize: number
+  fileCount: number
+  durationSeconds: number | null
+  averageSpeedBytesPerSecond: number | null
+  status: string
+}
+
 function formatFileSize(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return "N/A"
   if (bytes === 0) return "0 B"
-  
+
   const k = 1024
   const sizes = ["B", "KB", "MB", "GB", "TB"]
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  
+
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
+}
+
+function formatTransferSpeed(bytesPerSecond: number | null): string {
+  if (bytesPerSecond === null || bytesPerSecond === undefined) return "N/A"
+  if (bytesPerSecond === 0) return "0 B/s"
+
+  const k = 1024
+  const sizes = ["B/s", "KB/s", "MB/s", "GB/s"]
+  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
+
+  return `${parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null || seconds === undefined) return "N/A"
+
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${secs}s`
+  } else if (minutes > 0) {
+    return `${minutes}m ${secs}s`
+  } else {
+    return `${secs}s`
+  }
 }
 
 function formatDateTime(dateTime: string, timezone: string = "UTC"): string {
@@ -56,19 +94,61 @@ function formatExecutionDateTime(dateTime: string, timezone: string = "UTC"): st
   return formatDateTimeWithTimezone(dateTime, timezone)
 }
 
+function getStatusDisplay(status: string): { icon: React.ReactNode; color: string; text: string } {
+  switch (status) {
+    case "Starting":
+      return {
+        icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        color: "text-blue-600 dark:text-blue-400",
+        text: "Starting..."
+      }
+    case "Analyzing":
+      return {
+        icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        color: "text-yellow-600 dark:text-yellow-400",
+        text: "Analyzing Directory Structure"
+      }
+    case "Copying":
+      return {
+        icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        color: "text-orange-600 dark:text-orange-400",
+        text: "Copying Files"
+      }
+    case "Finalizing":
+      return {
+        icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        color: "text-purple-600 dark:text-purple-400",
+        text: "Finalizing Backup"
+      }
+    case "Finished":
+      return {
+        icon: <CheckCircle2 className="h-5 w-5" />,
+        color: "text-green-600 dark:text-green-400",
+        text: "Finished"
+      }
+    default:
+      return {
+        icon: <Clock className="h-5 w-5" />,
+        color: "text-gray-600 dark:text-gray-400",
+        text: "Unknown"
+      }
+  }
+}
+
 export function BackupLogs() {
   const navigate = useNavigate()
   const { planId, executionId } = useParams<{ planId: string; executionId?: string }>()
   const [backupPlan, setBackupPlan] = useState<BackupPlan | null>(null)
   const [executions, setExecutions] = useState<BackupExecution[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [executionStats, setExecutionStats] = useState<ExecutionStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [pageSize] = useState(100)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
-  
+
   // Filters
   const [filters, setFilters] = useState({
     action: "All",
@@ -78,10 +158,10 @@ export function BackupLogs() {
     fromDate: "",
     toDate: "",
   })
-  
+
   // Debounced filename filter for search
   const [fileNameInput, setFileNameInput] = useState("")
-  
+
   // Sorting
   const [sortBy, setSortBy] = useState("datetime")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -97,7 +177,7 @@ export function BackupLogs() {
     }
 
     window.addEventListener('timezoneChanged', handleTimezoneChange as EventListener)
-    
+
     // Load initial timezone from sessionStorage
     const saved = sessionStorage.getItem("selectedTimezone")
     if (saved) {
@@ -189,7 +269,7 @@ export function BackupLogs() {
           sortBy: sortBy,
           sortOrder: sortOrder,
         })
-        
+
         if (filters.action && filters.action !== "All") {
           params.append("action", filters.action)
         }
@@ -232,22 +312,58 @@ export function BackupLogs() {
 
     fetchLogs()
   }, [planId, executionId, page, filters, sortBy, sortOrder, pageSize, navigate])
-  
+
+  // Fetch execution stats
+  useEffect(() => {
+    const fetchExecutionStats = async () => {
+      if (!planId || !executionId) {
+        return
+      }
+
+      try {
+        const token = sessionStorage.getItem("token")
+        if (!token) {
+          navigate("/login")
+          return
+        }
+
+        const statsData: ExecutionStats = await apiGet<ExecutionStats>(
+          `/api/backupplan/${planId}/executions/${executionId}/stats`
+        )
+        setExecutionStats(statsData)
+      } catch (err) {
+        console.error("Error fetching execution stats:", err)
+        // Don't show error to user for stats, just log it
+      }
+    }
+
+    fetchExecutionStats()
+
+    // Auto-refresh stats if execution is not finished
+    const interval = setInterval(() => {
+      if (executionStats && executionStats.status !== "Finished") {
+        fetchExecutionStats()
+      }
+    }, 3000) // Refresh every 3 seconds
+
+    return () => clearInterval(interval)
+  }, [planId, executionId, navigate, executionStats])
+
   // Debounce filename filter - wait 500ms after user stops typing
   useEffect(() => {
     const timer = setTimeout(() => {
       setFilters(prev => ({ ...prev, fileName: fileNameInput }))
       setPage(1)
     }, 500)
-    
+
     return () => clearTimeout(timer)
   }, [fileNameInput])
-  
+
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }))
     setPage(1) // Reset to first page when filter changes
   }
-  
+
   const clearFilters = () => {
     setFileNameInput("")
     setFilters({
@@ -260,7 +376,7 @@ export function BackupLogs() {
     })
     setPage(1)
   }
-  
+
   const handleSort = (column: string) => {
     if (sortBy === column) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc")
@@ -270,21 +386,21 @@ export function BackupLogs() {
     }
     setPage(1)
   }
-  
+
   const getSortIcon = (column: string) => {
     if (sortBy !== column) {
       return <ArrowUpDown className="h-3 w-3 ml-1 inline" />
     }
-    return sortOrder === "asc" 
+    return sortOrder === "asc"
       ? <ArrowUp className="h-3 w-3 ml-1 inline" />
       : <ArrowDown className="h-3 w-3 ml-1 inline" />
   }
-  
-  const hasActiveFilters = filters.action !== "All" || 
-    filters.fileName !== "" || 
-    filters.minSize !== "" || 
-    filters.maxSize !== "" || 
-    filters.fromDate !== "" || 
+
+  const hasActiveFilters = filters.action !== "All" ||
+    filters.fileName !== "" ||
+    filters.minSize !== "" ||
+    filters.maxSize !== "" ||
+    filters.fromDate !== "" ||
     filters.toDate !== ""
 
   const getActionColor = (action: string) => {
@@ -367,7 +483,7 @@ export function BackupLogs() {
                   <table className="w-full">
                     <thead className="bg-muted">
                       <tr>
-                        <th className="text-left p-3 text-sm font-medium">Name</th>
+                        <th className="text-left p-3 text-sm font-medium">Execution</th>
                         <th className="text-left p-3 text-sm font-medium">Start Time</th>
                         <th className="text-left p-3 text-sm font-medium">End Time</th>
                         <th className="text-left p-3 text-sm font-medium">Status</th>
@@ -384,7 +500,7 @@ export function BackupLogs() {
                             {formatExecutionDateTime(execution.startDateTime, timezone)}
                           </td>
                           <td className="p-3 text-sm text-muted-foreground">
-                            {execution.endDateTime 
+                            {execution.endDateTime
                               ? formatExecutionDateTime(execution.endDateTime, timezone)
                               : <span className="text-muted-foreground/50">In progress...</span>}
                           </td>
@@ -467,6 +583,48 @@ export function BackupLogs() {
 
       {!error && (
         <>
+          {/* Execution Statistics */}
+          {executionStats && (
+            <div className="rounded-lg border bg-card p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Execution Statistics</h2>
+                {(() => {
+                  const statusDisplay = getStatusDisplay(executionStats.status)
+                  return (
+                    <div className={`flex items-center gap-2 ${statusDisplay.color} font-semibold`}>
+                      {statusDisplay.icon}
+                      <span>{statusDisplay.text}</span>
+                    </div>
+                  )
+                })()}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Total Data Transferred</p>
+                  <p className="text-2xl font-bold">{formatFileSize(executionStats.totalSize)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Files Copied</p>
+                  <p className="text-2xl font-bold">{executionStats.fileCount.toLocaleString()}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Duration</p>
+                  <p className="text-2xl font-bold">
+                    {executionStats.endDateTime ? formatDuration(executionStats.durationSeconds) : "Running..."}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Average Transfer Speed</p>
+                  <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                    {executionStats.endDateTime
+                      ? formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)
+                      : "Calculating..."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Filters Section */}
           <div className="rounded-lg border bg-card p-4 shadow-sm">
             <div className="space-y-4">
@@ -483,7 +641,7 @@ export function BackupLogs() {
                   </Button>
                 )}
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Action Filter */}
                 <div className="space-y-2">
@@ -501,7 +659,7 @@ export function BackupLogs() {
                     <option value="Milestone">Milestone</option>
                   </select>
                 </div>
-                
+
                 {/* Filename Filter */}
                 <div className="space-y-2">
                   <Label htmlFor="filter-filename">File Name</Label>
@@ -513,7 +671,7 @@ export function BackupLogs() {
                     onChange={(e) => setFileNameInput(e.target.value)}
                   />
                 </div>
-                
+
                 {/* Min Size Filter */}
                 <div className="space-y-2">
                   <Label htmlFor="filter-minsize">Min Size (bytes)</Label>
@@ -526,7 +684,7 @@ export function BackupLogs() {
                     min="0"
                   />
                 </div>
-                
+
                 {/* Max Size Filter */}
                 <div className="space-y-2">
                   <Label htmlFor="filter-maxsize">Max Size (bytes)</Label>
@@ -539,7 +697,7 @@ export function BackupLogs() {
                     min="0"
                   />
                 </div>
-                
+
                 {/* From Date Filter */}
                 <div className="space-y-2">
                   <Label htmlFor="filter-fromdate">From Date</Label>
@@ -550,7 +708,7 @@ export function BackupLogs() {
                     onChange={(e) => handleFilterChange("fromDate", e.target.value)}
                   />
                 </div>
-                
+
                 {/* To Date Filter */}
                 <div className="space-y-2">
                   <Label htmlFor="filter-todate">To Date</Label>
@@ -564,7 +722,7 @@ export function BackupLogs() {
               </div>
             </div>
           </div>
-          
+
           {/* Sort Section */}
           <div className="rounded-lg border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -584,7 +742,7 @@ export function BackupLogs() {
                   <option value="size">Size</option>
                   <option value="action">Action</option>
                 </select>
-                
+
                 <Button
                   variant="outline"
                   size="sm"
@@ -606,7 +764,7 @@ export function BackupLogs() {
                   )}
                 </Button>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <p className="text-sm text-muted-foreground">
                   Total entries: <span className="font-medium text-foreground">{totalCount}</span>
@@ -648,25 +806,25 @@ export function BackupLogs() {
                 <table className="w-full">
                   <thead className="bg-muted">
                     <tr>
-                      <th 
+                      <th
                         className="text-left p-3 text-sm font-medium cursor-pointer hover:bg-muted/80 select-none"
                         onClick={() => handleSort("datetime")}
                       >
                         Date/Time{getSortIcon("datetime")}
                       </th>
-                      <th 
+                      <th
                         className="text-left p-3 text-sm font-medium cursor-pointer hover:bg-muted/80 select-none"
                         onClick={() => handleSort("filename")}
                       >
                         File Name{getSortIcon("filename")}
                       </th>
-                      <th 
+                      <th
                         className="text-left p-3 text-sm font-medium cursor-pointer hover:bg-muted/80 select-none"
                         onClick={() => handleSort("size")}
                       >
                         Size{getSortIcon("size")}
                       </th>
-                      <th 
+                      <th
                         className="text-left p-3 text-sm font-medium cursor-pointer hover:bg-muted/80 select-none"
                         onClick={() => handleSort("action")}
                       >

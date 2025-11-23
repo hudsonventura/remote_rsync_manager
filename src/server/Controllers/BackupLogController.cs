@@ -58,9 +58,9 @@ public class BackupLogController : ControllerBase
     [ProducesResponseType(typeof(List<LogEntryResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetBackupPlanLogs(
-        Guid id, 
+        Guid id,
         [FromQuery] Guid? executionId = null,
-        [FromQuery] int page = 1, 
+        [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100,
         [FromQuery] string? action = null,
         [FromQuery] string? fileName = null,
@@ -131,7 +131,7 @@ public class BackupLogController : ControllerBase
 
             if (sortByLower == "filename")
             {
-                query = sortOrderLower == "asc" 
+                query = sortOrderLower == "asc"
                     ? query.OrderBy(log => log.fileName)
                     : query.OrderByDescending(log => log.fileName);
             }
@@ -221,6 +221,110 @@ public class BackupLogController : ControllerBase
             return StatusCode(500, new { message = "An error occurred while retrieving log summary", error = ex.Message });
         }
     }
+
+    [HttpGet("/api/backupplan/{id}/executions/{executionId}/stats")]
+    [ProducesResponseType(typeof(ExecutionStatsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetExecutionStats(Guid id, Guid executionId)
+    {
+        try
+        {
+            // Verify backup plan exists
+            var backupPlan = await _context.BackupPlans.FindAsync(id);
+            if (backupPlan == null)
+            {
+                return NotFound(new { message = "Backup plan not found" });
+            }
+
+            // Get execution details
+            var execution = await _logContext.BackupExecutions
+                .FirstOrDefaultAsync(e => e.id == executionId && e.backupPlanId == id);
+
+            if (execution == null)
+            {
+                return NotFound(new { message = "Execution not found" });
+            }
+
+            // Get all logs for this execution with action "Copy"
+            var copyLogs = await _logContext.LogEntries
+                .Where(log => log.executionId == executionId && log.action == "Copy")
+                .ToListAsync();
+
+            // Calculate total size (only for Copy actions)
+            var totalSize = copyLogs.Sum(l => l.size ?? 0);
+            var fileCount = copyLogs.Count;
+
+            // Calculate duration in seconds
+            double? durationSeconds = null;
+            double? averageSpeedBytesPerSecond = null;
+
+            if (execution.endDateTime.HasValue)
+            {
+                var duration = execution.endDateTime.Value - execution.startDateTime;
+                durationSeconds = duration.TotalSeconds;
+
+                // Calculate average speed (bytes per second)
+                if (durationSeconds > 0)
+                {
+                    averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
+                }
+            }
+
+            // Determine status based on milestone logs and execution completion
+            string status = "Unknown";
+            if (execution.endDateTime.HasValue)
+            {
+                status = "Finished";
+            }
+            else
+            {
+                // Check latest milestone to determine current phase
+                var latestMilestone = await _logContext.LogEntries
+                    .Where(log => log.executionId == executionId && log.action == "Milestone")
+                    .OrderByDescending(log => log.datetime)
+                    .FirstOrDefaultAsync();
+
+                if (latestMilestone != null)
+                {
+                    if (latestMilestone.reason.Contains("SourceAnalysisStarted"))
+                    {
+                        status = "Analyzing";
+                    }
+                    else if (latestMilestone.reason.Contains("CopiesStarted"))
+                    {
+                        status = "Copying";
+                    }
+                    else if (latestMilestone.reason.Contains("CopiesFinished"))
+                    {
+                        status = "Finalizing";
+                    }
+                }
+                else
+                {
+                    status = "Starting";
+                }
+            }
+
+            var stats = new ExecutionStatsResponse
+            {
+                ExecutionId = executionId,
+                StartDateTime = execution.startDateTime,
+                EndDateTime = execution.endDateTime,
+                TotalSize = totalSize,
+                FileCount = fileCount,
+                DurationSeconds = durationSeconds,
+                AverageSpeedBytesPerSecond = averageSpeedBytesPerSecond,
+                Status = status
+            };
+
+            return Ok(stats);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving execution stats for backup plan {BackupPlanId}, execution {ExecutionId}", id, executionId);
+            return StatusCode(500, new { message = "An error occurred while retrieving execution stats", error = ex.Message });
+        }
+    }
 }
 
 public class LogEntryResponse
@@ -250,4 +354,17 @@ public class BackupExecutionResponse
     public DateTime StartDateTime { get; set; }
     public DateTime? EndDateTime { get; set; }
 }
+
+public class ExecutionStatsResponse
+{
+    public Guid ExecutionId { get; set; }
+    public DateTime StartDateTime { get; set; }
+    public DateTime? EndDateTime { get; set; }
+    public long TotalSize { get; set; }
+    public int FileCount { get; set; }
+    public double? DurationSeconds { get; set; }
+    public double? AverageSpeedBytesPerSecond { get; set; }
+    public string Status { get; set; } = "Unknown";
+}
+
 
