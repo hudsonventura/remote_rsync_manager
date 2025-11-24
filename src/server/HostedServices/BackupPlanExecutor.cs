@@ -46,7 +46,7 @@ public class BackupPlanExecutor
                 startDateTime = startDateTime
             };
             executionId = execution.id;
-            
+
             logContext.BackupExecutions.Add(execution);
             await logContext.SaveChangesAsync();
 
@@ -133,9 +133,9 @@ public class BackupPlanExecutor
                 if (notificationService != null)
                 {
                     await notificationService.CreateBackupCompletedNotificationAsync(
-                        backupPlan.id, 
-                        executionId, 
-                        backupPlan.name, 
+                        backupPlan.id,
+                        executionId,
+                        backupPlan.name,
                         true);
                 }
             }
@@ -147,7 +147,7 @@ public class BackupPlanExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing backup plan {BackupPlanId}", backupPlan.id);
-            
+
             // Update execution end time even on error
             if (executionId != Guid.Empty)
             {
@@ -169,10 +169,10 @@ public class BackupPlanExecutor
                         if (notificationService != null)
                         {
                             await notificationService.CreateBackupCompletedNotificationAsync(
-                                backupPlan.id, 
-                                executionId, 
-                                backupPlan.name, 
-                                false, 
+                                backupPlan.id,
+                                executionId,
+                                backupPlan.name,
+                                false,
                                 ex.Message);
                         }
                     }
@@ -186,7 +186,7 @@ public class BackupPlanExecutor
                     _logger.LogWarning(updateEx, "Failed to update execution end time for {ExecutionId}", executionId);
                 }
             }
-            
+
             throw;
         }
     }
@@ -254,7 +254,7 @@ public class BackupPlanExecutor
 
         // Process items from current directory
         var directoriesToProcess = new List<string>();
-        
+
         foreach (var item in response.Items)
         {
             // Add all items (files and directories) to the result
@@ -556,13 +556,25 @@ public class BackupPlanExecutor
         var destinationFilesByRelativePath = new Dictionary<string, FileSystemItem>(pathComparer);
 
 
-        result.NewItems = sourceItems.Where(s => !destinationItems.Any(d => d.Name == s.Name)).ToList();
-        result.DeletedItems = destinationItems.Where(d => !sourceItems.Any(s => s.Name == d.Name)).ToList();
-        result.EditedItems = sourceItems.Where(s => destinationItems.Any(d => d.Name == s.Name && d.Size != s.Size)).ToList();
-        result.TransferredItems = sourceItems.Where(s => destinationItems.Any(d => d.Name == s.Name && d.Size == s.Size && s.Path != d.Path)).ToList();
+        result.NewItems = sourceItems.Where(
+            s => !destinationItems.Any(
+                d => d.Path + d.Name == s.Path + s.Name))
+            .ToList();
 
-        //dest   "1476 Lisa Manuel - O Raptor da Meia-Noite (Julia Hist 1476).doc"
-        //source "1476 Lisa Manuel - O Raptor da Meia-Noite (Julia Hist 1476).doc"
+        result.DeletedItems = destinationItems.Where(
+            d => !sourceItems.Any(
+                s => s.Path + s.Name == d.Path + d.Name))
+            .ToList();
+
+        result.EditedItems = sourceItems.Where(
+            s => destinationItems.Any(
+                d => d.Path + d.Name == s.Path + s.Name && d.Size != s.Size))
+            .ToList();
+
+        // result.TransferredItems = sourceItems.Where(s => destinationItems.Any(
+        //     d => d.Name + d.Path == s.Name + s.Path && d.Size == s.Size && s.Path != d.Path))
+        //     .ToList();
+
 
 
         return result;
@@ -916,7 +928,7 @@ public class BackupPlanExecutor
                 startDateTime = startDateTime
             };
             executionId = execution.id;
-            
+
             logContext.BackupExecutions.Add(execution);
             await logContext.SaveChangesAsync();
 
@@ -1063,7 +1075,7 @@ public class BackupPlanExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error simulating backup plan {BackupPlanId}", backupPlan.id);
-            
+
             // Update execution end time even on error
             if (executionId != Guid.Empty)
             {
@@ -1083,7 +1095,7 @@ public class BackupPlanExecutor
                     _logger.LogWarning(updateEx, "Failed to update simulation execution end time for {ExecutionId}", executionId);
                 }
             }
-            
+
             throw;
         }
     }
