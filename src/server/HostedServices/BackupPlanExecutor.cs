@@ -2,6 +2,7 @@ using System.Security.Cryptography.X509Certificates;
 using server.Data;
 using server.Models;
 using server.Services;
+using System.Security.Cryptography;
 
 namespace server.HostedServices;
 
@@ -445,11 +446,12 @@ public class BackupPlanExecutor
                 {
                     Name = fileInfo.Name,
                     Path = fileInfo.FullName,
+                    //PathName = fileInfo.FullName+fileInfo.Name,
                     Type = "file",
                     Size = fileInfo.Length,
                     LastModified = fileInfo.LastWriteTimeUtc,
                     Permissions = GetUnixPermissions(fileInfo.FullName),
-                    Md5 = null // Don't calculate MD5 for browsing (too slow)
+                    Md5 = CalculateFileMd5(fileInfo.FullName)
                 });
             }
             catch (Exception ex)
@@ -457,6 +459,23 @@ public class BackupPlanExecutor
                 // Log but continue processing other files
                 _logger.LogWarning(ex, "Error processing file: {Path}", fileInfo.FullName);
             }
+        }
+    }
+
+    //TODO: Unify the method to calculate the MD5
+    private string? CalculateFileMd5(string filePath)
+    {
+        try
+        {
+            using var md5 = MD5.Create();
+            using var stream = System.IO.File.OpenRead(filePath);
+            var hash = md5.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error calculating MD5 for file: {Path}", filePath);
+            return null;
         }
     }
 
@@ -558,27 +577,54 @@ public class BackupPlanExecutor
 
         result.NewItems = sourceItems.Where(
             s => !destinationItems.Any(
-                d => d.Path + d.Name == s.Path + s.Name))
+                d => GetPathDifference(d.Path, destinationBasePath) + d.Name == GetPathDifference(s.Path, sourceBasePath) + s.Name))
             .ToList();
 
         result.DeletedItems = destinationItems.Where(
             d => !sourceItems.Any(
-                s => s.Path + s.Name == d.Path + d.Name))
+                s => GetPathDifference(s.Path, sourceBasePath) + s.Name == GetPathDifference(d.Path, destinationBasePath) + d.Name))
             .ToList();
 
         result.EditedItems = sourceItems.Where(
             s => destinationItems.Any(
-                d => d.Path + d.Name == s.Path + s.Name && d.Size != s.Size))
+                d => GetPathDifference(s.Path, sourceBasePath) + s.Name == GetPathDifference(d.Path, destinationBasePath) + d.Name && d.Size != s.Size))
             .ToList();
 
-        // result.TransferredItems = sourceItems.Where(s => destinationItems.Any(
-        //     d => d.Name + d.Path == s.Name + s.Path && d.Size == s.Size && s.Path != d.Path))
-        //     .ToList();
+        result.TransferredItems = result.NewItems.Where(n => result.DeletedItems.Any(
+            d => d.Md5 == n.Md5 && n.Path == d.Path || n.Name != d.Name))
+            .ToList();
 
+        // result.NewItems.RemoveAll(item => result.TransferredItems.Contains(item));
+        // result.DeletedItems.RemoveAll(d =>
+        //     result.TransferredItems.Any(t => GetPathDifference(t.Path, destinationBasePath) == GetPathDifference(d.Path, sourceBasePath)));
 
 
         return result;
     }
+
+    private string GetPathDifference(string fullPath, string basePath)
+    {
+        if (string.IsNullOrWhiteSpace(fullPath) || string.IsNullOrWhiteSpace(basePath))
+        {
+            return fullPath;
+        }
+
+        var normalizedFull = NormalizePath(fullPath);
+        var normalizedBase = NormalizePath(basePath);
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (normalizedFull.StartsWith(normalizedBase, comparison))
+        {
+            var relativePath = normalizedFull.Substring(normalizedBase.Length);
+            return relativePath.TrimStart('/', '\\');
+        }
+
+        return fullPath;
+    }
+
 
     private string NormalizePath(string path)
     {
@@ -636,7 +682,11 @@ public class BackupPlanExecutor
         int deletedCount = 0;
         int errorCount = 0;
 
-        foreach (var item in itemsToDelete)
+        //first the itens more deep to be able to delete empty directories
+        // First delete the items inside the directories and the directory will be the last item to be deleted, and will be empty
+        var delete = itemsToDelete.OrderByDescending(i => i.Path.Length).ToList();
+
+        foreach (var item in delete)
         {
             // Update current file being processed
             try
@@ -670,6 +720,15 @@ public class BackupPlanExecutor
                     _logger.LogWarning("File does not exist, skipping deletion: {Path}", item.Path);
                     // Log as ignored since file doesn't exist
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", "File does not exist, cannot delete");
+                }
+                else if (item.Type == "directory" && Directory.Exists(item.Path))
+                {
+                    Directory.Delete(item.Path, true);
+                    deletedCount++;
+                    _logger.LogDebug("Deleted directory: {Path}", item.Path);
+
+                    // Log the deletion
+                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Delete", "Does not exist on source");
                 }
             }
             catch (UnauthorizedAccessException ex)
