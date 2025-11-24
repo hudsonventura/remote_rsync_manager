@@ -110,7 +110,7 @@ public class FileSystemController : ControllerBase
                             items.Add(new FileSystemItem
                             {
                                 Name = dirInfo.Name,
-                                Path = dirInfo.FullName,
+                                PathName = dirInfo.FullName,
                                 Type = "directory",
                                 Size = null,
                                 LastModified = dirInfo.LastWriteTimeUtc,
@@ -140,7 +140,8 @@ public class FileSystemController : ControllerBase
                         items.Add(new FileSystemItem
                         {
                             Name = fileInfo.Name,
-                            Path = fileInfo.FullName,
+                            PathName = fileInfo.FullName,
+                            Path = fileInfo.DirectoryName,
                             Type = "file",
                             Size = fileInfo.Length,
                             LastModified = fileInfo.LastWriteTimeUtc,

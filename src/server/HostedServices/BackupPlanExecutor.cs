@@ -264,7 +264,7 @@ public class BackupPlanExecutor
             // If it's a directory, add it to the list to process recursively
             if (item.Type == "directory")
             {
-                directoriesToProcess.Add(item.Path);
+                directoriesToProcess.Add(item.PathName);
             }
         }
 
@@ -404,7 +404,7 @@ public class BackupPlanExecutor
                 items.Add(new FileSystemItem
                 {
                     Name = dirInfo.Name,
-                    Path = dirInfo.FullName,
+                    PathName = dirInfo.FullName,
                     Type = "directory",
                     Size = null,
                     LastModified = dirInfo.LastWriteTimeUtc,
@@ -445,8 +445,8 @@ public class BackupPlanExecutor
                 items.Add(new FileSystemItem
                 {
                     Name = fileInfo.Name,
-                    Path = fileInfo.FullName,
-                    //PathName = fileInfo.FullName+fileInfo.Name,
+                    Path = fileInfo.DirectoryName,
+                    PathName = fileInfo.FullName,
                     Type = "file",
                     Size = fileInfo.Length,
                     LastModified = fileInfo.LastWriteTimeUtc,
@@ -577,21 +577,21 @@ public class BackupPlanExecutor
 
         result.NewItems = sourceItems.Where(
             s => !destinationItems.Any(
-                d => GetPathDifference(d.Path, destinationBasePath) + d.Name == GetPathDifference(s.Path, sourceBasePath) + s.Name))
+                d => GetPathDifference(d.PathName, destinationBasePath) + d.Name == GetPathDifference(s.PathName, sourceBasePath) + s.Name))
             .ToList();
 
         result.DeletedItems = destinationItems.Where(
             d => !sourceItems.Any(
-                s => GetPathDifference(s.Path, sourceBasePath) + s.Name == GetPathDifference(d.Path, destinationBasePath) + d.Name))
+                s => GetPathDifference(s.PathName, sourceBasePath) + s.Name == GetPathDifference(d.PathName, destinationBasePath) + d.Name))
             .ToList();
 
         result.EditedItems = sourceItems.Where(
             s => destinationItems.Any(
-                d => GetPathDifference(s.Path, sourceBasePath) + s.Name == GetPathDifference(d.Path, destinationBasePath) + d.Name && d.Size != s.Size))
+                d => GetPathDifference(s.PathName, sourceBasePath) + s.Name == GetPathDifference(d.PathName, destinationBasePath) + d.Name && d.Size != s.Size))
             .ToList();
 
         result.TransferredItems = result.NewItems.Where(n => result.DeletedItems.Any(
-            d => d.Md5 == n.Md5 && n.Path == d.Path || n.Name != d.Name))
+            d => d.Md5 == n.Md5 && n.PathName == d.PathName || n.Name != d.Name))
             .ToList();
 
         // result.NewItems.RemoveAll(item => result.TransferredItems.Contains(item));
@@ -684,7 +684,7 @@ public class BackupPlanExecutor
 
         //first the itens more deep to be able to delete empty directories
         // First delete the items inside the directories and the directory will be the last item to be deleted, and will be empty
-        var delete = itemsToDelete.OrderByDescending(i => i.Path.Length).ToList();
+        var delete = itemsToDelete.OrderByDescending(i => i.PathName.Length).ToList();
 
         foreach (var item in delete)
         {
@@ -694,8 +694,8 @@ public class BackupPlanExecutor
                 var execution = await logContext.BackupExecutions.FindAsync(executionId);
                 if (execution != null)
                 {
-                    execution.currentFileName = Path.GetFileName(item.Path);
-                    execution.currentFilePath = item.Path;
+                    execution.currentFileName = Path.GetFileName(item.PathName);
+                    execution.currentFilePath = item.PathName;
                     await logContext.SaveChangesAsync();
                 }
             }
@@ -706,26 +706,26 @@ public class BackupPlanExecutor
 
             try
             {
-                if (item.Type == "file" && System.IO.File.Exists(item.Path))
+                if (item.Type == "file" && System.IO.File.Exists(item.PathName))
                 {
-                    System.IO.File.Delete(item.Path);
+                    System.IO.File.Delete(item.PathName);
                     deletedCount++;
-                    _logger.LogDebug("Deleted file: {Path}", item.Path);
+                    _logger.LogDebug("Deleted file: {Path}", item.PathName);
 
                     // Log the deletion
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Delete", "Does not exist on source");
                 }
                 else if (item.Type == "file")
                 {
-                    _logger.LogWarning("File does not exist, skipping deletion: {Path}", item.Path);
+                    _logger.LogWarning("File does not exist, skipping deletion: {Path}", item.PathName);
                     // Log as ignored since file doesn't exist
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", "File does not exist, cannot delete");
                 }
-                else if (item.Type == "directory" && Directory.Exists(item.Path))
+                else if (item.Type == "directory" && Directory.Exists(item.PathName))
                 {
-                    Directory.Delete(item.Path, true);
+                    Directory.Delete(item.PathName, true);
                     deletedCount++;
-                    _logger.LogDebug("Deleted directory: {Path}", item.Path);
+                    _logger.LogDebug("Deleted directory: {Path}", item.PathName);
 
                     // Log the deletion
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Delete", "Does not exist on source");
@@ -734,7 +734,7 @@ public class BackupPlanExecutor
             catch (UnauthorizedAccessException ex)
             {
                 errorCount++;
-                _logger.LogWarning(ex, "Access denied when deleting file: {Path}", item.Path);
+                _logger.LogWarning(ex, "Access denied when deleting file: {Path}", item.PathName);
                 if (item.Type == "file")
                 {
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", $"Access denied: {ex.Message}");
@@ -743,7 +743,7 @@ public class BackupPlanExecutor
             catch (Exception ex)
             {
                 errorCount++;
-                _logger.LogError(ex, "Error deleting file: {Path}", item.Path);
+                _logger.LogError(ex, "Error deleting file: {Path}", item.PathName);
                 if (item.Type == "file")
                 {
                     await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", $"Error: {ex.Message}");
@@ -795,8 +795,8 @@ public class BackupPlanExecutor
                 var execution = await logContext.BackupExecutions.FindAsync(executionId);
                 if (execution != null)
                 {
-                    execution.currentFileName = Path.GetFileName(sourceItem.Path);
-                    execution.currentFilePath = sourceItem.Path;
+                    execution.currentFileName = Path.GetFileName(sourceItem.PathName);
+                    execution.currentFilePath = sourceItem.PathName;
                     await logContext.SaveChangesAsync();
                 }
             }
@@ -806,7 +806,7 @@ public class BackupPlanExecutor
             }
 
             // Calculate destination path
-            var relativePath = GetRelativePath(sourceItem.Path, NormalizePath(sourceBasePath));
+            var relativePath = GetRelativePath(sourceItem.PathName, NormalizePath(sourceBasePath));
             var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
             CopiedFileInfo? copiedFile = null;
@@ -821,12 +821,12 @@ public class BackupPlanExecutor
                 }
 
                 // Download file from agent
-                await DownloadAndSaveFile(agent, sourceItem.Path, destinationPath);
+                await DownloadAndSaveFile(agent, sourceItem.PathName, destinationPath);
 
                 copiedCount++;
                 copiedFile = new CopiedFileInfo
                 {
-                    SourcePath = sourceItem.Path,
+                    SourcePath = sourceItem.PathName,
                     DestinationPath = destinationPath
                 };
 
@@ -836,7 +836,7 @@ public class BackupPlanExecutor
             catch (Exception ex)
             {
                 errorCount++;
-                _logger.LogError(ex, "Error copying file: {Path}", sourceItem.Path);
+                _logger.LogError(ex, "Error copying file: {Path}", sourceItem.PathName);
                 // Log the failed copy as ignored
                 await LogFileOperation(logContext, backupPlanId, executionId, sourceItem, "Ignored", $"Error copying: {ex.Message}");
             }
@@ -1041,7 +1041,7 @@ public class BackupPlanExecutor
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
-                        FilePath = item.Path,
+                        FilePath = item.PathName,
                         Size = item.Size,
                         Action = "Copy",
                         Reason = "Does not exist on destination"
@@ -1060,7 +1060,7 @@ public class BackupPlanExecutor
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
-                        FilePath = item.Path,
+                        FilePath = item.PathName,
                         Size = item.Size,
                         Action = "Copy",
                         Reason = reason
@@ -1077,7 +1077,7 @@ public class BackupPlanExecutor
                     allItems.Add(new SimulationItem
                     {
                         FileName = item.Name,
-                        FilePath = item.Path,
+                        FilePath = item.PathName,
                         Size = item.Size,
                         Action = "Delete",
                         Reason = "Does not exist on source"
@@ -1170,7 +1170,7 @@ public class BackupPlanExecutor
                 executionId = executionId,
                 datetime = DateTime.UtcNow,
                 fileName = item.Name,
-                filePath = item.Path,
+                filePath = item.PathName,
                 size = item.Size,
                 action = action,
                 reason = reason

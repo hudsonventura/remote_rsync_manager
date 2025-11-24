@@ -85,6 +85,7 @@ public class LookController : ControllerBase
                         items.Add(new FileSystemItem
                         {
                             Name = dirInfo.Name,
+                            PathName = dirInfo.FullName,
                             Path = dirInfo.FullName,
                             Type = "directory",
                             Size = null,
@@ -126,7 +127,8 @@ public class LookController : ControllerBase
                         items.Add(new FileSystemItem
                         {
                             Name = fileInfo.Name,
-                            Path = fileInfo.FullName,
+                            PathName = fileInfo.FullName,
+                            Path = fileInfo.DirectoryName,
                             Type = "file",
                             Size = fileInfo.Length,
                             LastModified = fileInfo.LastWriteTimeUtc,
