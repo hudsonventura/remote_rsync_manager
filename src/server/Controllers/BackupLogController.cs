@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using server.Data;
@@ -6,6 +7,7 @@ using server.Models;
 namespace server.Controllers;
 
 [ApiController]
+[Authorize]
 public class BackupLogController : ControllerBase
 {
     private readonly LogDbContext _logContext;
@@ -353,6 +355,212 @@ public class BackupLogController : ControllerBase
             });
         }
     }
+
+    [HttpGet("/api/logs")]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllLogs(
+        [FromQuery] Guid? executionId = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100,
+        [FromQuery] string? action = null,
+        [FromQuery] string? fileName = null,
+        [FromQuery] long? minSize = null,
+        [FromQuery] long? maxSize = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        [FromQuery] Guid? backupPlanId = null,
+        [FromQuery] string? sortBy = "datetime",
+        [FromQuery] string? sortOrder = "desc")
+    {
+        try
+        {
+            // Start with base query - all logs
+            var query = _logContext.LogEntries.AsQueryable();
+
+            // Filter by executionId if provided (highest priority)
+            if (executionId.HasValue)
+            {
+                query = query.Where(log => log.executionId == executionId.Value);
+            }
+
+            // Filter by backupPlanId if provided
+            if (backupPlanId.HasValue)
+            {
+                query = query.Where(log => log.backupPlanId == backupPlanId.Value);
+            }
+
+            // Apply filters
+            if (!string.IsNullOrWhiteSpace(action) && action != "All")
+            {
+                query = query.Where(log => log.action == action);
+            }
+
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                // Use ToLower() for case-insensitive search (SQLite compatible)
+                var fileNameLower = fileName.ToLower();
+                query = query.Where(log => log.fileName.ToLower().Contains(fileNameLower));
+            }
+
+            if (minSize.HasValue)
+            {
+                query = query.Where(log => log.size.HasValue && log.size >= minSize.Value);
+            }
+
+            if (maxSize.HasValue)
+            {
+                query = query.Where(log => log.size.HasValue && log.size <= maxSize.Value);
+            }
+
+            if (fromDate.HasValue)
+            {
+                query = query.Where(log => log.datetime >= fromDate.Value);
+            }
+
+            if (toDate.HasValue)
+            {
+                query = query.Where(log => log.datetime <= toDate.Value);
+            }
+
+            // Get total count after filters
+            var totalCount = await query.CountAsync();
+
+            // Apply sorting
+            var sortByLower = sortBy?.ToLower() ?? "datetime";
+            var sortOrderLower = sortOrder?.ToLower() ?? "desc";
+
+            if (sortByLower == "filename")
+            {
+                query = sortOrderLower == "asc"
+                    ? query.OrderBy(log => log.fileName)
+                    : query.OrderByDescending(log => log.fileName);
+            }
+            else if (sortByLower == "size")
+            {
+                query = sortOrderLower == "asc"
+                    ? query.OrderBy(log => log.size ?? 0)
+                    : query.OrderByDescending(log => log.size ?? 0);
+            }
+            else if (sortByLower == "action")
+            {
+                query = sortOrderLower == "asc"
+                    ? query.OrderBy(log => log.action)
+                    : query.OrderByDescending(log => log.action);
+            }
+            else // datetime (default)
+            {
+                query = sortOrderLower == "asc"
+                    ? query.OrderBy(log => log.datetime)
+                    : query.OrderByDescending(log => log.datetime);
+            }
+
+            // Get paginated logs with backup plan information
+            var logs = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(log => new
+                {
+                    log.id,
+                    log.datetime,
+                    log.fileName,
+                    log.filePath,
+                    log.size,
+                    log.action,
+                    log.reason,
+                    log.backupPlanId
+                })
+                .ToListAsync();
+
+            // Get backup plan names for the logs
+            var backupPlanIds = logs.Select(l => l.backupPlanId).Distinct().ToList();
+            var backupPlans = await _context.BackupPlans
+                .Where(bp => backupPlanIds.Contains(bp.id))
+                .Select(bp => new { bp.id, bp.name })
+                .ToListAsync();
+
+            var backupPlanDict = backupPlans.ToDictionary(bp => bp.id, bp => bp.name);
+
+            // Map logs with backup plan names
+            var logResponses = logs.Select(log => new AllLogsEntryResponse
+            {
+                Id = log.id,
+                DateTime = log.datetime,
+                FileName = log.fileName,
+                FilePath = log.filePath,
+                Size = log.size,
+                Action = log.action,
+                Reason = log.reason,
+                BackupPlanId = log.backupPlanId,
+                BackupPlanName = backupPlanDict.ContainsKey(log.backupPlanId) 
+                    ? backupPlanDict[log.backupPlanId] 
+                    : "Unknown Plan"
+            }).ToList();
+
+            return Ok(new
+            {
+                logs = logResponses,
+                totalCount = totalCount,
+                page = page,
+                pageSize = pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving all logs. Error:{error}", ex.Message);
+            return StatusCode(500, new { message = "An error occurred while retrieving logs", error = ex.Message });
+        }
+    }
+
+    [HttpGet("/api/executions")]
+    [ProducesResponseType(typeof(List<AllExecutionsResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllExecutions()
+    {
+        try
+        {
+            // Get all executions with backup plan information
+            var executions = await _logContext.BackupExecutions
+                .OrderByDescending(e => e.startDateTime)
+                .Select(e => new
+                {
+                    e.id,
+                    e.backupPlanId,
+                    e.name,
+                    e.startDateTime,
+                    e.endDateTime
+                })
+                .ToListAsync();
+
+            // Get backup plan names for the executions
+            var backupPlanIds = executions.Select(e => e.backupPlanId).Distinct().ToList();
+            var backupPlans = await _context.BackupPlans
+                .Where(bp => backupPlanIds.Contains(bp.id))
+                .Select(bp => new { bp.id, bp.name })
+                .ToListAsync();
+
+            var backupPlanDict = backupPlans.ToDictionary(bp => bp.id, bp => bp.name);
+
+            // Map executions with backup plan names
+            var executionResponses = executions.Select(e => new AllExecutionsResponse
+            {
+                Id = e.id,
+                BackupPlanId = e.backupPlanId,
+                BackupPlanName = backupPlanDict.ContainsKey(e.backupPlanId)
+                    ? backupPlanDict[e.backupPlanId]
+                    : "Unknown Plan",
+                Name = e.name,
+                StartDateTime = e.startDateTime,
+                EndDateTime = e.endDateTime
+            }).ToList();
+
+            return Ok(executionResponses);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving all executions");
+            return StatusCode(500, new { message = "An error occurred while retrieving executions", error = ex.Message });
+        }
+    }
 }
 
 public class LogEntryResponse
@@ -397,6 +605,29 @@ public class ExecutionStatsResponse
     public string Status { get; set; } = "Unknown";
     public string? CurrentFileName { get; set; }
     public string? CurrentFilePath { get; set; }
+}
+
+public class AllLogsEntryResponse
+{
+    public Guid Id { get; set; }
+    public DateTime DateTime { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public long? Size { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public Guid BackupPlanId { get; set; }
+    public string BackupPlanName { get; set; } = string.Empty;
+}
+
+public class AllExecutionsResponse
+{
+    public Guid Id { get; set; }
+    public Guid BackupPlanId { get; set; }
+    public string BackupPlanName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public DateTime StartDateTime { get; set; }
+    public DateTime? EndDateTime { get; set; }
 }
 
 

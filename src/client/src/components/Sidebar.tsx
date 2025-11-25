@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Home, Settings, User, LayoutDashboard, Server, Database, Info, Users } from "lucide-react"
+import { Home, Settings, User, LayoutDashboard, Server, Database, Info, Users, FileText } from "lucide-react"
 import { useEffect, useState } from "react"
 import { apiGet } from "@/lib/api"
 
@@ -13,6 +13,7 @@ const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Agents", href: "/agents", icon: Server },
   { name: "Backup Plans", href: "/backup-plans", icon: Database },
+  { name: "Logs", href: "/logs", icon: FileText },
   { name: "Profile", href: "/profile", icon: User },
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "About", href: "/about", icon: Info },
