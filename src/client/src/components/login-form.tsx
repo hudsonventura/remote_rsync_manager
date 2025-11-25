@@ -50,7 +50,7 @@ export function LoginForm() {
         console.warn("Failed to load user preferences:", err)
       }
 
-      // Redirect to home page
+      // Redirect to dashboard
       navigate("/")
     } catch (err) {
       if (err instanceof TypeError && err.message === "Failed to fetch") {

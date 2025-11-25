@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { Layout } from "@/components/Layout"
 import { Login } from "@/pages/Login"
-import { Home } from "@/pages/Home"
 import { Dashboard } from "@/pages/Dashboard"
 import { Profile } from "@/pages/Profile"
 import { Settings } from "@/pages/Settings"
@@ -23,7 +22,7 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Layout />}>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/agents" element={<AgentsList />} />
           <Route path="/agents/add" element={<AddAgent />} />
