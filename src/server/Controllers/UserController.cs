@@ -403,20 +403,31 @@ public class UserController : ControllerBase
                 return NotFound(new { message = "User not found" });
             }
 
+            _logger.LogInformation("Updating preferences for user {UserId}. Current timezone: {CurrentTimezone}, New timezone: {NewTimezone}",
+                userId, user.timezone, request.Timezone);
+
             // Update timezone if provided
             if (request.Timezone != null)
             {
                 user.timezone = request.Timezone;
+                _logger.LogInformation("Timezone updated to: {Timezone}", user.timezone);
             }
 
             // Update theme if provided
             if (request.Theme != null)
             {
                 user.theme = request.Theme;
+                _logger.LogInformation("Theme updated to: {Theme}", user.theme);
             }
 
             user.updatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+
+            // Explicitly mark the entity as modified to ensure EF Core tracks the changes
+            _context.Entry(user).State = EntityState.Modified;
+
+            var changesSaved = await _context.SaveChangesAsync();
+            _logger.LogInformation("SaveChanges completed. Changes saved: {ChangesSaved}. User timezone is now: {Timezone}",
+                changesSaved, user.timezone);
 
             var response = new UserResponse
             {

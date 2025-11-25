@@ -590,13 +590,19 @@ public class BackupPlanExecutor
                 d => GetPathDifference(s.PathName, sourceBasePath) + s.Name == GetPathDifference(d.PathName, destinationBasePath) + d.Name && d.Size != s.Size))
             .ToList();
 
-        result.TransferredItems = result.NewItems.Where(n => result.DeletedItems.Any(
-            d => d.Md5 == n.Md5 && n.PathName == d.PathName || n.Name != d.Name))
-            .ToList();
+        // result.TransferredItems = result.NewItems.Where(n => result.DeletedItems.Any(
+        //     d => d.Md5 == n.Md5 && n.PathName == d.PathName || n.Name != d.Name))
+        //     .ToList();
 
         // result.NewItems.RemoveAll(item => result.TransferredItems.Contains(item));
         // result.DeletedItems.RemoveAll(d =>
-        //     result.TransferredItems.Any(t => GetPathDifference(t.Path, destinationBasePath) == GetPathDifference(d.Path, sourceBasePath)));
+        //      result.TransferredItems.Any(t => GetPathDifference(t.PathName, sourceBasePath) == GetPathDifference(d.PathName, destinationBasePath)));
+
+        // var teste = result.TransferredItems[1];
+        // var teste3 = GetPathDifference(teste.PathName, sourceBasePath);
+        // var teste4 = GetPathDifference(result.DeletedItems[0].PathName, destinationBasePath);
+
+        //string id1 = FileId.Get(teste.PathName);
 
 
         return result;
@@ -604,25 +610,7 @@ public class BackupPlanExecutor
 
     private string GetPathDifference(string fullPath, string basePath)
     {
-        if (string.IsNullOrWhiteSpace(fullPath) || string.IsNullOrWhiteSpace(basePath))
-        {
-            return fullPath;
-        }
-
-        var normalizedFull = NormalizePath(fullPath);
-        var normalizedBase = NormalizePath(basePath);
-
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        if (normalizedFull.StartsWith(normalizedBase, comparison))
-        {
-            var relativePath = normalizedFull.Substring(normalizedBase.Length);
-            return relativePath.TrimStart('/', '\\');
-        }
-
-        return fullPath;
+        return fullPath.Replace(basePath, "").TrimStart('\\', '/');
     }
 
 
