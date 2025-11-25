@@ -39,8 +39,15 @@ export function LoginForm() {
       // Load user preferences
       try {
         const userData = await apiGet<{ timezone?: string; theme?: string }>("/api/users/me")
+        // Always set timezone from database if it exists, otherwise keep sessionStorage value or default to UTC
         if (userData.timezone) {
           sessionStorage.setItem("selectedTimezone", userData.timezone)
+        } else {
+          // If no timezone in database, ensure sessionStorage has a default value
+          const currentTimezone = sessionStorage.getItem("selectedTimezone")
+          if (!currentTimezone) {
+            sessionStorage.setItem("selectedTimezone", "UTC")
+          }
         }
         if (userData.theme) {
           localStorage.setItem("remember-ui-theme", userData.theme)
@@ -48,6 +55,11 @@ export function LoginForm() {
       } catch (err) {
         // If fetching preferences fails, continue with defaults
         console.warn("Failed to load user preferences:", err)
+        // On error, ensure we have a default timezone
+        const currentTimezone = sessionStorage.getItem("selectedTimezone")
+        if (!currentTimezone) {
+          sessionStorage.setItem("selectedTimezone", "UTC")
+        }
       }
 
       // Redirect to dashboard

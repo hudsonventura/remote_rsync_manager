@@ -631,6 +631,7 @@ export function TimezoneSelector() {
   const [selectedTimezone, setSelectedTimezone] = useState<string>("UTC")
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+  const [isInitialized, setIsInitialized] = useState(false)
 
   useEffect(() => {
     // Load timezone from user profile or sessionStorage or default to UTC
@@ -640,6 +641,7 @@ export function TimezoneSelector() {
         if (userData.timezone && ALL_TIMEZONES.includes(userData.timezone)) {
           setSelectedTimezone(userData.timezone)
           sessionStorage.setItem("selectedTimezone", userData.timezone)
+          setIsInitialized(true)
           return
         }
       } catch (err) {
@@ -654,11 +656,17 @@ export function TimezoneSelector() {
         setSelectedTimezone("UTC")
         sessionStorage.setItem("selectedTimezone", "UTC")
       }
+      setIsInitialized(true)
     }
     loadTimezone()
   }, [])
 
   useEffect(() => {
+    // Only save to database after initial load is complete
+    if (!isInitialized) {
+      return
+    }
+
     // Save to sessionStorage when changed
     sessionStorage.setItem("selectedTimezone", selectedTimezone)
     // Trigger event to notify components that timezone changed
@@ -673,7 +681,7 @@ export function TimezoneSelector() {
       }
     }
     saveTimezone()
-  }, [selectedTimezone])
+  }, [selectedTimezone, isInitialized])
 
   const filteredTimezones = ALL_TIMEZONES.filter(tz => 
     tz.toLowerCase().includes(searchQuery.toLowerCase())
