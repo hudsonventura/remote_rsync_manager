@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Bell, X, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { apiGet, apiPost, apiDelete } from "@/lib/api"
+import { formatDateTimeWithTimezone } from "@/components/TimezoneSelector"
 
 interface Notification {
   id: string
@@ -15,24 +16,8 @@ interface Notification {
   createdAt: string
 }
 
-function formatDateTime(dateTime: string): string {
-  const date = new Date(dateTime)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
-
-  if (diffMins < 1) return "Just now"
-  if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
-  
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-  })
+function formatDateTime(dateTime: string, timezone: string = "UTC"): string {
+  return formatDateTimeWithTimezone(dateTime, timezone)
 }
 
 export function Notifications() {
@@ -44,6 +29,7 @@ export function Notifications() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default")
   const [previousUnreadCount, setPreviousUnreadCount] = useState(0)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [timezone, setTimezone] = useState<string>("UTC")
 
   const fetchNotifications = async () => {
     try {
@@ -61,6 +47,26 @@ export function Notifications() {
       console.error("Error fetching notifications:", err)
     }
   }
+
+  // Listen for timezone changes from navbar
+  useEffect(() => {
+    const handleTimezoneChange = (event: CustomEvent) => {
+      const newTimezone = event.detail || "UTC"
+      setTimezone(newTimezone)
+    }
+
+    window.addEventListener('timezoneChanged', handleTimezoneChange as EventListener)
+
+    // Load initial timezone from sessionStorage
+    const saved = sessionStorage.getItem("selectedTimezone")
+    if (saved) {
+      setTimezone(saved)
+    }
+
+    return () => {
+      window.removeEventListener('timezoneChanged', handleTimezoneChange as EventListener)
+    }
+  }, [])
 
   // Request notification permission on mount
   useEffect(() => {
@@ -285,7 +291,7 @@ export function Notifications() {
                           {notification.message}
                         </p>
                         <p className="text-xs text-muted-foreground mt-2">
-                          {formatDateTime(notification.createdAt)}
+                          {formatDateTime(notification.createdAt, timezone)}
                         </p>
                       </div>
                       <Button
