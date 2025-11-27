@@ -22,7 +22,7 @@ public class BackupPlanExecutor
         _environment = environment;
     }
 
-    public async Task ExecuteBackupPlanAsync(BackupPlan backupPlan, Agent agent, bool isAutomatic = true)
+    public async Task ExecuteBackupPlanAsync(BackupPlan backupPlan, bool isAutomatic = true)
     {
         Guid executionId = Guid.Empty;
         try
@@ -30,7 +30,16 @@ public class BackupPlanExecutor
             using var scope = _serviceScopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
 
-            _logger.LogInformation("Executing backup plan {BackupPlanId} for agent {AgentHostname}", backupPlan.id, agent.hostname);
+            _logger.LogInformation("Executing backup plan {BackupPlanId}", backupPlan.id);
+
+            // Get rsync configuration from Agent if available, otherwise from BackupPlan
+            var rsyncConfig = GetRsyncConfig(backupPlan);
+            
+            // Validate rsync configuration
+            if (string.IsNullOrWhiteSpace(rsyncConfig.Host))
+            {
+                throw new InvalidOperationException("Backup plan does not have rsync host configured. Please configure rsync connection details in the backup plan or associated agent.");
+            }
 
             // Get log context for logging operations
             var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
@@ -53,30 +62,14 @@ public class BackupPlanExecutor
 
             _logger.LogInformation("Created backup execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
 
-            // Reload agent from database to ensure we have the latest token
-            var agentFromDb = await dbContext.Agents.FindAsync(agent.id);
-            if (agentFromDb == null)
-            {
-                _logger.LogError("Agent {AgentId} not found in database", agent.id);
-                throw new InvalidOperationException($"Agent {agent.id} not found");
-            }
-
-            // Check if agent has a token
-            if (string.IsNullOrEmpty(agentFromDb.token))
-            {
-                _logger.LogError("Agent {AgentHostname} does not have a token. Cannot execute backup plan {BackupPlanId}",
-                    agentFromDb.hostname, backupPlan.id);
-                throw new InvalidOperationException($"Agent {agentFromDb.hostname} is not authenticated. Please pair the agent first.");
-            }
-
             // Log: Source analysis started
             await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Analysis Started", "Started analyzing source file structure");
 
-            // Call the /Look endpoint to get file system items from source (remote agent)
-            var sourceFileSystemItems = await CallLookEndpointAsync(agentFromDb, backupPlan.source);
+            // Get file system items from source using rsync
+            var sourceFileSystemItems = await GetRsyncFileSystemItemsAsync(backupPlan, rsyncConfig);
 
-            _logger.LogInformation("Retrieved {Count} file system items from agent {AgentHostname} for path {Source}",
-                sourceFileSystemItems.Count, agentFromDb.hostname, backupPlan.source);
+            _logger.LogInformation("Retrieved {Count} file system items from rsync source {Host} for path {Source}",
+                sourceFileSystemItems.Count, backupPlan.rsyncHost, backupPlan.source);
 
             // Get file system items from local destination
             var destinationFileSystemItems = GetLocalFileSystemItems(backupPlan.destination);
@@ -102,16 +95,8 @@ public class BackupPlanExecutor
             // Log: Copies started
             await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Copies Started", "Started copying files from source to destination");
 
-            // Copy files from source (agent) to destination
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, executionId, logContext, "Does not exist on destination"))
-            {
-                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
-            }
-
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, executionId, logContext, "Changed on source"))
-            {
-                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
-            }
+            // Use rsync to copy files from source to destination
+            await ExecuteRsyncBackupAsync(backupPlan, rsyncConfig, executionId, logContext);
 
             // Log: Copies finished
             await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Copies Finished", "Finished copying files from source to destination");
@@ -192,145 +177,223 @@ public class BackupPlanExecutor
         }
     }
 
-    private async Task<List<FileSystemItem>> CallLookEndpointAsync(Agent agent, string sourcePath)
+    private class RsyncConfig
     {
-        // Determine base URL - try HTTPS first, then HTTP
-        string baseUrl = string.Empty;
-        var hostname = agent.hostname;
+        public string Host { get; set; } = string.Empty;
+        public string? User { get; set; }
+        public int Port { get; set; } = 22;
+        public string? SshKeyContent { get; set; } // SSH private key content (will be written to temp file)
+    }
 
-        if (hostname.StartsWith("http://"))
+    private RsyncConfig GetRsyncConfig(BackupPlan backupPlan)
+    {
+        // If backup plan has an agent with rsync config, use that; otherwise use backup plan's config
+        if (backupPlan.agent != null && !string.IsNullOrWhiteSpace(backupPlan.agent.hostname))
         {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            string[] protocolsToTry = new[] { "https://", "http://" };
-            var lastErrorMessage = string.Empty;
-            foreach (var protocol in protocolsToTry)
+            return new RsyncConfig
             {
-                var testUrl = $"{protocol}{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}";
-                var result = await TryCallLookEndpointAsync(testUrl, agent.token!);
-                if (result.Success && result.Items != null)
+                Host = backupPlan.agent.hostname,
+                User = backupPlan.agent.rsyncUser,
+                Port = backupPlan.agent.rsyncPort,
+                SshKeyContent = backupPlan.agent.rsyncSshKey
+            };
+        }
+        
+        return new RsyncConfig
+        {
+            Host = backupPlan.rsyncHost ?? string.Empty,
+            User = backupPlan.rsyncUser,
+            Port = backupPlan.rsyncPort,
+            SshKeyContent = backupPlan.rsyncSshKey
+        };
+    }
+
+    private string? CreateTempSshKeyFile(RsyncConfig rsyncConfig)
+    {
+        if (string.IsNullOrWhiteSpace(rsyncConfig.SshKeyContent))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Create a temporary file for the SSH key
+            var tempDir = Path.Combine(Path.GetTempPath(), "remember_rsync_keys");
+            if (!Directory.Exists(tempDir))
+            {
+                Directory.CreateDirectory(tempDir);
+            }
+
+            var tempKeyFile = Path.Combine(tempDir, $"ssh_key_{Guid.NewGuid()}");
+            File.WriteAllText(tempKeyFile, rsyncConfig.SshKeyContent);
+            
+            // Set proper permissions (600) on Unix-like systems
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            {
+                try
                 {
-                    baseUrl = protocol + hostname;
-                    break;
+                    var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        Arguments = $"600 \"{tempKeyFile}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var process = System.Diagnostics.Process.Start(processStartInfo);
+                    process?.WaitForExit();
                 }
-                lastErrorMessage = result.ErrorMessage;
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to set permissions on temporary SSH key file");
+                }
             }
-            if (string.IsNullOrEmpty(baseUrl))
+
+            return tempKeyFile;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create temporary SSH key file");
+            throw;
+        }
+    }
+
+    private async Task<List<FileSystemItem>> GetRsyncFileSystemItemsAsync(BackupPlan backupPlan, RsyncConfig rsyncConfig)
+    {
+        var allItems = new List<FileSystemItem>();
+
+        // Build rsync command to list files
+        var rsyncSource = BuildRsyncSource(rsyncConfig, backupPlan.source);
+        var rsyncArgs = $"--list-only --recursive --human-readable --itemize-changes \"{rsyncSource}\"";
+
+        _logger.LogInformation("Executing rsync list command: rsync {Args}", rsyncArgs);
+
+        var processStartInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "rsync",
+            Arguments = rsyncArgs,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        // Create temporary SSH key file if SSH key content is provided
+        string? tempSshKeyFile = null;
+        try
+        {
+            tempSshKeyFile = CreateTempSshKeyFile(rsyncConfig);
+
+            // Add SSH options if configured
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile))
             {
-                throw new HttpRequestException($"Failed 3 to connect to agent at {agent.hostname}, trying to get https://{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}. Error: {lastErrorMessage}");
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -i \"{tempSshKeyFile}\" -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
+            }
+            else
+            {
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
+            }
+
+            using var process = System.Diagnostics.Process.Start(processStartInfo);
+            if (process == null)
+            {
+                throw new InvalidOperationException("Failed to start rsync process");
+            }
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogError("Rsync list command failed with exit code {ExitCode}: {Error}", process.ExitCode, error);
+                throw new InvalidOperationException($"Rsync failed: {error}");
+            }
+
+            // Parse rsync output
+            ParseRsyncListOutput(output, backupPlan.source, allItems);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing rsync list command");
+            throw;
+        }
+        finally
+        {
+            // Clean up temporary SSH key file
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && File.Exists(tempSshKeyFile))
+            {
+                try
+                {
+                    File.Delete(tempSshKeyFile);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                }
             }
         }
-
-        // Recursively get all files and directories by calling /Look for each directory level
-        var allItems = new List<FileSystemItem>();
-        await GetDirectoryRecursivelyAsync(baseUrl, agent.token!, sourcePath, allItems);
 
         return allItems;
     }
 
-    private async Task GetDirectoryRecursivelyAsync(string baseUrl, string agentToken, string directoryPath, List<FileSystemItem> allItems)
+    private string BuildRsyncSource(RsyncConfig rsyncConfig, string sourcePath)
     {
-        var lookUrl = $"{baseUrl}/Look?dir={Uri.EscapeDataString(directoryPath)}";
-        var response = await TryCallLookEndpointAsync(lookUrl, agentToken);
-
-        if (!response.Success)
-        {
-            _logger.LogWarning("Failed to call /Look endpoint for {Path}: {Error}", directoryPath, response.ErrorMessage);
-            return;
-        }
-
-        if (response.Items == null || response.Items.Count == 0)
-        {
-            return;
-        }
-
-        // Process items from current directory
-        var directoriesToProcess = new List<string>();
-
-        foreach (var item in response.Items)
-        {
-            // Add all items (files and directories) to the result
-            allItems.Add(item);
-
-            // If it's a directory, add it to the list to process recursively
-            if (item.Type == "directory")
-            {
-                directoriesToProcess.Add(item.PathName);
-            }
-        }
-
-        // Recursively process subdirectories
-        foreach (var subDir in directoriesToProcess)
-        {
-            await GetDirectoryRecursivelyAsync(baseUrl, agentToken, subDir, allItems);
-        }
+        var user = string.IsNullOrWhiteSpace(rsyncConfig.User) ? "" : $"{rsyncConfig.User}@";
+        return $"{user}{rsyncConfig.Host}:{sourcePath}";
     }
 
-    private async Task<(bool Success, List<FileSystemItem>? Items, string ErrorMessage)> TryCallLookEndpointAsync(string url, string agentToken)
+    private void ParseRsyncListOutput(string output, string sourceBasePath, List<FileSystemItem> items)
     {
-        // Configure HttpClient to accept self-signed certificates and invalid certificates
-        var httpClientHandler = new HttpClientHandler();
-
-
-        // Accept self-signed certificates and invalid certificates
-        httpClientHandler.ServerCertificateCustomValidationCallback =
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-            {
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-
-        httpClient.Timeout = TimeSpan.FromSeconds(30); // Timeout for individual directory listing (non-recursive, should be fast)
-
-        // Add the authentication token header
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
-        try
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        
+        foreach (var line in lines)
         {
-            _logger.LogInformation("Calling /Look endpoint at {Url}", url);
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("total"))
+                continue;
 
-            var response = await httpClient.GetAsync(url);
+            // Parse rsync output format
+            // Format: drwxr-xr-x          4,096 2024/01/01 12:00:00 directory/
+            // Format: -rw-r--r--          1,234 2024/01/01 12:00:00 file.txt
+            
+            var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 5)
+                continue;
 
-            if (response.IsSuccessStatusCode)
+            var permissions = parts[0];
+            var sizeStr = parts[1].Replace(",", "");
+            var dateStr = $"{parts[2]} {parts[3]}";
+            var name = string.Join(" ", parts.Skip(4));
+
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var isDirectory = permissions.StartsWith("d") || name.EndsWith("/");
+            var fullPath = Path.Combine(sourceBasePath, name.TrimEnd('/')).Replace('\\', '/');
+
+            long? size = null;
+            if (!isDirectory && long.TryParse(sizeStr, out var parsedSize))
             {
-                var items = await response.Content.ReadFromJsonAsync<List<FileSystemItem>>();
-                _logger.LogInformation("Successfully retrieved {Count} items from /Look endpoint", items?.Count ?? 0);
-                return (true, items ?? new List<FileSystemItem>(), string.Empty);
+                size = parsedSize;
             }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+
+            DateTime lastModified = DateTime.UtcNow;
+            if (DateTime.TryParse(dateStr, out var parsedDate))
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, null, "Authentication failed: Invalid or expired token");
+                lastModified = parsedDate;
             }
-            else
+
+            items.Add(new FileSystemItem
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to call /Look endpoint at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, null, $"HTTP {response.StatusCode}: {errorContent}");
-            }
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Timeout calling /Look endpoint at {Url}", url);
-            return (false, null, "Request timeout");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling /Look endpoint at {Url}", url);
-            return (false, null, ex.Message);
+                Name = Path.GetFileName(name.TrimEnd('/')),
+                PathName = fullPath,
+                Path = Path.GetDirectoryName(fullPath) ?? sourceBasePath,
+                Type = isDirectory ? "directory" : "file",
+                Size = size,
+                LastModified = lastModified,
+                Permissions = permissions.Length >= 10 ? permissions.Substring(1, 9) : null
+            });
         }
     }
 
@@ -445,7 +508,7 @@ public class BackupPlanExecutor
                 items.Add(new FileSystemItem
                 {
                     Name = fileInfo.Name,
-                    Path = fileInfo.DirectoryName,
+                    Path = fileInfo.DirectoryName ?? string.Empty,
                     PathName = fileInfo.FullName,
                     Type = "file",
                     Size = fileInfo.Length,
@@ -742,210 +805,121 @@ public class BackupPlanExecutor
         _logger.LogInformation("Deletion complete: {DeletedCount} deleted, {ErrorCount} errors", deletedCount, errorCount);
     }
 
-    private class CopiedFileInfo
+
+    private async Task ExecuteRsyncBackupAsync(BackupPlan backupPlan, RsyncConfig rsyncConfig, Guid executionId, LogDbContext logContext)
     {
-        public string SourcePath { get; set; } = string.Empty;
-        public string DestinationPath { get; set; } = string.Empty;
-    }
+        _logger.LogInformation("Starting rsync backup from {Source} to {Destination}", backupPlan.source, backupPlan.destination);
 
-    private async IAsyncEnumerable<CopiedFileInfo> CopyFilesFromSource(
-        List<FileSystemItem> itemsToCopy,
-        Agent agent,
-        string sourceBasePath,
-        string destinationBasePath,
-        Guid backupPlanId,
-        Guid executionId,
-        LogDbContext logContext,
-        string reason)
-    {
-        if (itemsToCopy.Count == 0)
+        // Ensure destination directory exists
+        if (!Directory.Exists(backupPlan.destination))
         {
-            _logger.LogInformation("No files to copy from source");
-            yield break;
+            Directory.CreateDirectory(backupPlan.destination);
+            _logger.LogInformation("Created destination directory: {Path}", backupPlan.destination);
         }
 
-        _logger.LogInformation("Copying {Count} files from source to destination", itemsToCopy.Count);
+        // Build rsync command
+        var rsyncSource = BuildRsyncSource(rsyncConfig, backupPlan.source);
+        var rsyncArgs = $"--archive --verbose --delete --itemize-changes \"{rsyncSource}\" \"{backupPlan.destination}\"";
 
-        int copiedCount = 0;
-        int errorCount = 0;
+        _logger.LogInformation("Executing rsync backup command: rsync {Args}", rsyncArgs);
 
-        foreach (var sourceItem in itemsToCopy)
+        var processStartInfo = new System.Diagnostics.ProcessStartInfo
         {
-            // Only process files, not directories
-            if (sourceItem.Type != "file")
-            {
-                continue;
-            }
+            FileName = "rsync",
+            Arguments = rsyncArgs,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
 
-            // Update current file being processed
-            try
-            {
-                var execution = await logContext.BackupExecutions.FindAsync(executionId);
-                if (execution != null)
-                {
-                    execution.currentFileName = Path.GetFileName(sourceItem.PathName);
-                    execution.currentFilePath = sourceItem.PathName;
-                    await logContext.SaveChangesAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
-            }
-
-            // Calculate destination path
-            var relativePath = GetRelativePath(sourceItem.PathName, NormalizePath(sourceBasePath));
-            var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
-
-            CopiedFileInfo? copiedFile = null;
-            try
-            {
-                // Ensure destination directory exists
-                var destinationDir = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
-                {
-                    Directory.CreateDirectory(destinationDir);
-                    _logger.LogDebug("Created destination directory: {Path}", destinationDir);
-                }
-
-                // Download file from agent
-                await DownloadAndSaveFile(agent, sourceItem.PathName, destinationPath);
-
-                copiedCount++;
-                copiedFile = new CopiedFileInfo
-                {
-                    SourcePath = sourceItem.PathName,
-                    DestinationPath = destinationPath
-                };
-
-                // Log the successful copy
-                await LogFileOperation(logContext, backupPlanId, executionId, sourceItem, "Copy", reason);
-            }
-            catch (Exception ex)
-            {
-                errorCount++;
-                _logger.LogError(ex, "Error copying file: {Path}", sourceItem.PathName);
-                // Log the failed copy as ignored
-                await LogFileOperation(logContext, backupPlanId, executionId, sourceItem, "Ignored", $"Error copying: {ex.Message}");
-            }
-
-            // Yield the file info outside the try-catch so it can be logged immediately
-            if (copiedFile != null)
-            {
-                yield return copiedFile;
-            }
-        }
-
-        _logger.LogInformation("Copy complete: {CopiedCount} copied, {ErrorCount} errors", copiedCount, errorCount);
-    }
-
-    private async Task DownloadAndSaveFile(Agent agent, string sourceFilePath, string destinationFilePath)
-    {
-        // Determine base URL
-        string baseUrl;
-        var hostname = agent.hostname;
-
-        if (hostname.StartsWith("http://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            string[] protocolsToTry = new[] { "https://", "http://" };
-            foreach (var protocol in protocolsToTry)
-            {
-                var testUrl = $"{protocol}{hostname}/Download?filePath={Uri.EscapeDataString(sourceFilePath)}";
-                var result = await TryDownloadFileAsync(testUrl, agent.token!, destinationFilePath);
-                if (result.Success)
-                {
-                    return;
-                }
-            }
-            throw new HttpRequestException($"Failed 4 to connect to agent at {agent.hostname} to download file");
-        }
-
-        var downloadUrl = $"{baseUrl}/Download?filePath={Uri.EscapeDataString(sourceFilePath)}";
-        var response = await TryDownloadFileAsync(downloadUrl, agent.token!, destinationFilePath);
-
-        if (!response.Success)
-        {
-            throw new HttpRequestException($"Failed to download file: {response.ErrorMessage}");
-        }
-    }
-
-    private async Task<(bool Success, string ErrorMessage)> TryDownloadFileAsync(string url, string agentToken, string destinationPath)
-    {
-        // Configure HttpClient to accept self-signed certificates and invalid certificates
-        var httpClientHandler = new HttpClientHandler();
-
-        httpClientHandler.ServerCertificateCustomValidationCallback =
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-            {
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromMinutes(10); // Longer timeout for file downloads
-
-        // Add the authentication token header
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
+        // Create temporary SSH key file if SSH key content is provided
+        string? tempSshKeyFile = null;
         try
         {
-            _logger.LogInformation("Downloading file from: {Url}", url);
+            tempSshKeyFile = CreateTempSshKeyFile(rsyncConfig);
 
-            var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-
-            if (response.IsSuccessStatusCode)
+            // Add SSH options if configured
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile))
             {
-                // Ensure destination directory exists
-                var destinationDir = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
-                {
-                    Directory.CreateDirectory(destinationDir);
-                }
-
-                // Stream the file to disk
-                using (var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var httpStream = await response.Content.ReadAsStreamAsync())
-                {
-                    await httpStream.CopyToAsync(fileStream);
-                }
-
-                _logger.LogInformation("Successfully downloaded and saved file: {DestinationPath}", destinationPath);
-                return (true, string.Empty);
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, "Authentication failed: Invalid or expired token");
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -i \"{tempSshKeyFile}\" -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to download file from {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, $"HTTP {response.StatusCode}: {errorContent}");
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
             }
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Timeout downloading file from {Url}", url);
-            return (false, "Request timeout");
+
+            using var process = System.Diagnostics.Process.Start(processStartInfo);
+            if (process == null)
+            {
+                throw new InvalidOperationException("Failed to start rsync process");
+            }
+
+            // Read output line by line to track progress
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                // Parse rsync output to update current file
+                // Format: >f+++++++++ file.txt
+                // Format: *deleting   oldfile.txt
+                if (line.StartsWith(">f") || line.StartsWith(">d") || line.StartsWith("*deleting"))
+                {
+                    var fileName = line.Substring(line.LastIndexOf(' ') + 1).Trim();
+                    if (!string.IsNullOrWhiteSpace(fileName))
+                    {
+                        try
+                        {
+                            var execution = await logContext.BackupExecutions.FindAsync(executionId);
+                            if (execution != null)
+                            {
+                                execution.currentFileName = fileName;
+                                execution.currentFilePath = Path.Combine(backupPlan.destination, fileName);
+                                await logContext.SaveChangesAsync();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
+                        }
+                    }
+                }
+
+                _logger.LogDebug("Rsync output: {Line}", line);
+            }
+
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogError("Rsync backup command failed with exit code {ExitCode}: {Error}", process.ExitCode, error);
+                throw new InvalidOperationException($"Rsync failed: {error}");
+            }
+
+            _logger.LogInformation("Rsync backup completed successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error downloading file from {Url}", url);
-            return (false, ex.Message);
+            _logger.LogError(ex, "Error executing rsync backup command");
+            throw;
+        }
+        finally
+        {
+            // Clean up temporary SSH key file
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && File.Exists(tempSshKeyFile))
+            {
+                try
+                {
+                    File.Delete(tempSshKeyFile);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                }
+            }
         }
     }
 
@@ -953,7 +927,7 @@ public class BackupPlanExecutor
     /// Simulates a backup plan execution by creating execution logs without actually performing file operations.
     /// This method creates BackupExecution and LogEntry records to show what would happen.
     /// </summary>
-    public async Task<SimulationResult> SimulateBackupPlanAsync(BackupPlan backupPlan, Agent agent)
+    public async Task<SimulationResult> SimulateBackupPlanAsync(BackupPlan backupPlan)
     {
         Guid executionId = Guid.Empty;
         try
@@ -962,7 +936,16 @@ public class BackupPlanExecutor
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
             var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
 
-            _logger.LogInformation("Simulating backup plan {BackupPlanId} for agent {AgentHostname}", backupPlan.id, agent.hostname);
+            _logger.LogInformation("Simulating backup plan {BackupPlanId}", backupPlan.id);
+
+            // Get rsync configuration from Agent if available, otherwise from BackupPlan
+            var rsyncConfig = GetRsyncConfig(backupPlan);
+            
+            // Validate rsync configuration
+            if (string.IsNullOrWhiteSpace(rsyncConfig.Host))
+            {
+                throw new InvalidOperationException("Backup plan does not have rsync host configured. Please configure rsync connection details in the backup plan or associated agent.");
+            }
 
             // Create backup execution record for simulation
             var startDateTime = DateTime.UtcNow;
@@ -981,27 +964,11 @@ public class BackupPlanExecutor
 
             _logger.LogInformation("Created simulation execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
 
-            // Reload agent from database to ensure we have the latest token
-            var agentFromDb = await dbContext.Agents.FindAsync(agent.id);
-            if (agentFromDb == null)
-            {
-                _logger.LogError("Agent {AgentId} not found in database", agent.id);
-                throw new InvalidOperationException($"Agent {agent.id} not found");
-            }
+            // Get file system items from source using rsync
+            var sourceFileSystemItems = await GetRsyncFileSystemItemsAsync(backupPlan, rsyncConfig);
 
-            // Check if agent has a token
-            if (string.IsNullOrEmpty(agentFromDb.token))
-            {
-                _logger.LogError("Agent {AgentHostname} does not have a token. Cannot simulate backup plan {BackupPlanId}",
-                    agentFromDb.hostname, backupPlan.id);
-                throw new InvalidOperationException($"Agent {agentFromDb.hostname} is not authenticated. Please pair the agent first.");
-            }
-
-            // Call the /Look endpoint to get file system items from source (remote agent)
-            var sourceFileSystemItems = await CallLookEndpointAsync(agentFromDb, backupPlan.source);
-
-            _logger.LogInformation("Retrieved {Count} file system items from agent {AgentHostname} for path {Source}",
-                sourceFileSystemItems.Count, agentFromDb.hostname, backupPlan.source);
+            _logger.LogInformation("Retrieved {Count} file system items from rsync source {Host} for path {Source}",
+                sourceFileSystemItems.Count, rsyncConfig.Host, backupPlan.source);
 
             // Get file system items from local destination
             var destinationFileSystemItems = GetLocalFileSystemItems(backupPlan.destination);

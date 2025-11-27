@@ -6,6 +6,10 @@ public record UpdateBackupPlanRequest(
     string Schedule,
     string Source,
     string Destination,
+    string? RsyncHost,
+    string? RsyncUser,
+    int? RsyncPort,
+    string? RsyncSshKey,
     bool Active = true
 );
 

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using server.Data;
 
@@ -10,9 +11,11 @@ using server.Data;
 namespace server.Migrations
 {
     [DbContext(typeof(DBContext))]
-    partial class DBContextModelSnapshot : ModelSnapshot
+    [Migration("20251125234541_AddRsyncToBackupPlan")]
+    partial class AddRsyncToBackupPlan
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
@@ -29,15 +32,6 @@ namespace server.Migrations
 
                     b.Property<string>("name")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("rsyncPort")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("rsyncSshKey")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("rsyncUser")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("token")
@@ -108,7 +102,7 @@ namespace server.Migrations
                     b.Property<int>("rsyncPort")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("rsyncSshKey")
+                    b.Property<string>("rsyncSshKeyPath")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("rsyncUser")

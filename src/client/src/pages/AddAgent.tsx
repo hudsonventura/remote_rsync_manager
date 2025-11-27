@@ -9,9 +9,10 @@ export function AddAgent() {
   const navigate = useNavigate()
   const [name, setName] = useState("New Agent")
   const [hostname, setHostname] = useState("")
-  const [pairingCode, setPairingCode] = useState("")
+  const [rsyncUser, setRsyncUser] = useState("")
+  const [rsyncPort, setRsyncPort] = useState("22")
+  const [rsyncSshKey, setRsyncSshKey] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
@@ -20,7 +21,6 @@ export function AddAgent() {
     setError(null)
     setSuccess(false)
     setIsLoading(true)
-    setIsValidating(true)
 
     try {
       const token = sessionStorage.getItem("token")
@@ -29,22 +29,19 @@ export function AddAgent() {
         return
       }
 
-      if (pairingCode.trim().length !== 6) {
-        setError("Pairing code must be exactly 6 digits")
-        setIsLoading(false)
-        setIsValidating(false)
-        return
-      }
-
       await apiPost("/api/agent", {
         name: name.trim(),
         hostname: hostname.trim(),
-        pairingCode: pairingCode.trim(),
+        rsyncUser: rsyncUser.trim() || null,
+        rsyncPort: rsyncPort ? parseInt(rsyncPort, 10) : null,
+        rsyncSshKey: rsyncSshKey.trim() || null,
       })
       setSuccess(true)
       setName("New Agent")
       setHostname("")
-      setPairingCode("")
+      setRsyncUser("")
+      setRsyncPort("22")
+      setRsyncSshKey("")
       
       // Redirect to agents list after a short delay
       setTimeout(() => {
@@ -58,7 +55,6 @@ export function AddAgent() {
       }
     } finally {
       setIsLoading(false)
-      setIsValidating(false)
     }
   }
 
@@ -67,7 +63,7 @@ export function AddAgent() {
       <div>
         <h1 className="text-3xl font-bold">Add Agent</h1>
         <p className="text-muted-foreground mt-2">
-          Register a new agent by providing its hostname
+          Register a new rsync connection by providing hostname and SSH configuration
         </p>
       </div>
 
@@ -115,33 +111,63 @@ export function AddAgent() {
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
-              Enter the hostname or address of the agent
+              Enter the hostname or IP address of the remote server for rsync connections
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="pairingCode">Pairing Code *</Label>
+            <Label htmlFor="rsyncUser">Rsync/SSH User</Label>
             <Input
-              id="pairingCode"
+              id="rsyncUser"
               type="text"
-              placeholder="123456"
-              value={pairingCode}
-              onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              required
+              placeholder="username"
+              value={rsyncUser}
+              onChange={(e) => setRsyncUser(e.target.value)}
               disabled={isLoading}
               className="max-w-md"
-              maxLength={6}
-              minLength={6}
             />
             <p className="text-sm text-muted-foreground">
-              Enter the 6-digit pairing code displayed in the agent's console. 
-              This code is required to pair the agent and generate an authentication token.
+              SSH username for rsync connections (optional)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rsyncPort">Rsync/SSH Port</Label>
+            <Input
+              id="rsyncPort"
+              type="number"
+              placeholder="22"
+              value={rsyncPort}
+              onChange={(e) => setRsyncPort(e.target.value)}
+              disabled={isLoading}
+              className="max-w-md"
+              min="1"
+              max="65535"
+            />
+            <p className="text-sm text-muted-foreground">
+              SSH port for rsync connections (default: 22)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rsyncSshKey">SSH Private Key</Label>
+            <textarea
+              id="rsyncSshKey"
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+              value={rsyncSshKey}
+              onChange={(e) => setRsyncSshKey(e.target.value)}
+              disabled={isLoading}
+              rows={6}
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs max-w-md"
+            />
+            <p className="text-sm text-muted-foreground">
+              Paste your SSH private key content here (optional). The key will be stored securely and used for rsync authentication.
             </p>
           </div>
 
           <div className="flex gap-4">
             <Button type="submit" disabled={isLoading}>
-              {isValidating ? "Validating agent..." : isLoading ? "Creating..." : "Create Agent"}
+              {isLoading ? "Creating..." : "Create Agent"}
             </Button>
             <Button
               type="button"

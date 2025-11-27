@@ -39,11 +39,9 @@ public class BackupPlanController : ControllerBase
             return BadRequest(new { message = "Destination is required" });
         }
 
-        // Check if agent exists
-        var agent = await _context.Agents.FindAsync(request.AgentId);
-        if (agent == null)
+        if (string.IsNullOrWhiteSpace(request.RsyncHost))
         {
-            return NotFound(new { message = "Agent not found" });
+            return BadRequest(new { message = "Rsync host is required" });
         }
 
         var backupPlan = new BackupPlan
@@ -55,24 +53,23 @@ public class BackupPlanController : ControllerBase
             source = request.Source.Trim(),
             destination = request.Destination.Trim(),
             active = request.Active,
-            agent = agent
+            rsyncHost = request.RsyncHost.Trim(),
+            rsyncUser = request.RsyncUser?.Trim(),
+            rsyncPort = request.RsyncPort ?? 22,
+            rsyncSshKey = request.RsyncSshKey?.Trim()
         };
 
         try
         {
             _context.BackupPlans.Add(backupPlan);
             await _context.SaveChangesAsync();
-            
-            // Verify the agentid was set
-            var savedAgentId = EF.Property<Guid?>(backupPlan, "agentid");
-            _logger.LogInformation("Backup plan saved with AgentId: {AgentId}", savedAgentId);
 
-            _logger.LogInformation("Backup plan created with ID: {BackupPlanId}, Name: {Name}, Agent: {AgentId}", 
-                backupPlan.id, backupPlan.name, request.AgentId);
+            _logger.LogInformation("Backup plan created with ID: {BackupPlanId}, Name: {Name}, RsyncHost: {RsyncHost}", 
+                backupPlan.id, backupPlan.name, backupPlan.rsyncHost);
 
             return CreatedAtAction(
-                nameof(GetBackupPlansByAgent),
-                new { agentId = request.AgentId },
+                nameof(GetBackupPlan),
+                new { id = backupPlan.id },
                 backupPlan);
         }
         catch (Exception ex)
@@ -88,10 +85,8 @@ public class BackupPlanController : ControllerBase
     {
         try
         {
-            // Query backup plans with agent information using a join
+            // Query backup plans
             var query = from bp in _context.BackupPlans
-                       join a in _context.Agents on EF.Property<Guid?>(bp, "agentid") equals a.id into agentGroup
-                       from agent in agentGroup.DefaultIfEmpty()
                        select new BackupPlanResponse
                        {
                            Id = bp.id,
@@ -102,7 +97,7 @@ public class BackupPlanController : ControllerBase
                            Destination = bp.destination,
                            Active = bp.active,
                            AgentId = EF.Property<Guid?>(bp, "agentid"),
-                           AgentHostname = agent != null ? agent.hostname : null
+                           AgentHostname = bp.rsyncHost
                        };
 
             var response = await query.ToListAsync();
@@ -175,6 +170,24 @@ public class BackupPlanController : ControllerBase
             backupPlan.source = request.Source.Trim();
             backupPlan.destination = request.Destination.Trim();
             backupPlan.active = request.Active;
+            
+            // Update rsync properties if provided
+            if (!string.IsNullOrWhiteSpace(request.RsyncHost))
+            {
+                backupPlan.rsyncHost = request.RsyncHost.Trim();
+            }
+            if (request.RsyncUser != null)
+            {
+                backupPlan.rsyncUser = request.RsyncUser.Trim();
+            }
+            if (request.RsyncPort.HasValue)
+            {
+                backupPlan.rsyncPort = request.RsyncPort.Value;
+            }
+            if (request.RsyncSshKey != null)
+            {
+                backupPlan.rsyncSshKey = request.RsyncSshKey.Trim();
+            }
 
             await _context.SaveChangesAsync();
 
@@ -190,34 +203,6 @@ public class BackupPlanController : ControllerBase
         }
     }
 
-    [HttpGet("/api/backupplan/agent/{agentId}")]
-    [ProducesResponseType(typeof(List<BackupPlan>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetBackupPlansByAgent(Guid agentId)
-    {
-        try
-        {
-            // Check if agent exists
-            var agentExists = await _context.Agents.AnyAsync(a => a.id == agentId);
-            if (!agentExists)
-            {
-                return NotFound(new { message = "Agent not found" });
-            }
-
-            // Get backup plans for the agent
-            // Query by agentid column (as per migration)
-            var backupPlans = await _context.BackupPlans
-                .Where(bp => EF.Property<Guid?>(bp, "agentid") == agentId)
-                .ToListAsync();
-
-            return Ok(backupPlans);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving backup plans for agent {AgentId}", agentId);
-            return StatusCode(500, new { message = "An error occurred while retrieving backup plans" });
-        }
-    }
 
     [HttpDelete("/api/backupplan/{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -257,7 +242,6 @@ public class BackupPlanController : ControllerBase
         try
         {
             var backupPlan = await _context.BackupPlans
-                .Include(bp => bp.agent)
                 .FirstOrDefaultAsync(bp => bp.id == id);
 
             if (backupPlan == null)
@@ -265,13 +249,13 @@ public class BackupPlanController : ControllerBase
                 return NotFound(new { message = "Backup plan not found" });
             }
 
-            if (backupPlan.agent == null)
+            if (string.IsNullOrWhiteSpace(backupPlan.rsyncHost))
             {
-                return BadRequest(new { message = "Backup plan does not have an associated agent" });
+                return BadRequest(new { message = "Backup plan does not have rsync host configured" });
             }
 
             var executor = HttpContext.RequestServices.GetRequiredService<BackupPlanExecutor>();
-            var simulationResult = await executor.SimulateBackupPlanAsync(backupPlan, backupPlan.agent);
+            var simulationResult = await executor.SimulateBackupPlanAsync(backupPlan);
 
             return Ok(simulationResult);
         }
@@ -291,7 +275,6 @@ public class BackupPlanController : ControllerBase
         try
         {
             var backupPlan = await _context.BackupPlans
-                .Include(bp => bp.agent)
                 .FirstOrDefaultAsync(bp => bp.id == id);
 
             if (backupPlan == null)
@@ -299,15 +282,9 @@ public class BackupPlanController : ControllerBase
                 return NotFound(new { message = "Backup plan not found" });
             }
 
-            if (backupPlan.agent == null)
+            if (string.IsNullOrWhiteSpace(backupPlan.rsyncHost))
             {
-                return BadRequest(new { message = "Backup plan does not have an associated agent" });
-            }
-
-            // Check if agent has a token
-            if (string.IsNullOrEmpty(backupPlan.agent.token))
-            {
-                return BadRequest(new { message = "Agent is not authenticated. Please pair the agent first." });
+                return BadRequest(new { message = "Backup plan does not have rsync host configured" });
             }
 
             var executor = HttpContext.RequestServices.GetRequiredService<BackupPlanExecutor>();
@@ -317,7 +294,7 @@ public class BackupPlanController : ControllerBase
             {
                 try
                 {
-                    await executor.ExecuteBackupPlanAsync(backupPlan, backupPlan.agent, isAutomatic: false);
+                    await executor.ExecuteBackupPlanAsync(backupPlan, false);
                     _logger.LogInformation("Manual execution of backup plan {BackupPlanId} completed successfully", id);
                 }
                 catch (Exception ex)
