@@ -22,40 +22,6 @@
       "sourceFileMap": {
         "/Views": "${workspaceFolder}/Views"
       }
-    },
-    {
-      "name": "Agent Console",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "agent console: build",
-      "program": "${workspaceFolder}/src/agents/cli/bin/Debug/net10.0/agent.dll",
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "https://localhost:5002"
-      },
-      "sourceFileMap": {
-        "/Views": "${workspaceFolder}/Views"
-      }
-    },
-    {
-      "name": "Agent Desktop",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "agent desktop: build",
-      "program": "${workspaceFolder}/src/agents/desktop/bin/Debug/net10.0/agentDesktop.dll",
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_HTTPS_PORT": "5002"
-      },
-      "sourceFileMap": {
-        "/Views": "${workspaceFolder}/Views"
-      }
     }
   ]
 }

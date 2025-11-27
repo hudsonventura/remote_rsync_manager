@@ -49,8 +49,7 @@
       "dependsOrder": "parallel",
       "dependsOn": [
         "server: build",
-        "client: run",
-        "agent: run"
+        "client: run"
       ],
       "problemMatcher": []
     },
@@ -58,66 +57,10 @@
       "label": "stop: all",
       "dependsOrder": "parallel",
       "dependsOn": [
-        "client: stop",
-        "agent: stop"
+        "client: stop"
       ],
       "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "problemMatcher": [],
-      "command": "dotnet build --configuration Debug",
-      "options": {
-        "cwd": "${workspaceFolder}/src/agents/desktop"
-      },
-      "label": "agent desktop: build"
-    },
-    {
-      "type": "shell",
-      "problemMatcher": [],
-      "command": "dotnet build --configuration Debug",
-      "options": {
-        "cwd": "${workspaceFolder}/src/agents/cli"
-      },
-      "label": "agent console: build"
-    },
-    {
-      "label": "agent: run",
-      "type": "shell",
-      "command": "dotnet run --project src/agents/cli/agent.csproj",
-      "isBackground": true,
-      "problemMatcher": {
-        "owner": "custom",
-        "pattern": [
-          {
-            "regexp": ".",
-            "file": 1,
-            "location": 2,
-            "message": 3
-          }
-        ],
-        "background": {
-          "activeOnStart": true,
-          "beginsPattern": ".*",
-          "endsPattern": "(Now listening|Application started|listening on)"
-        }
-      },
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "agent: stop",
-      "type": "shell",
-      "command": "pkill -f 'agent'",
-      "problemMatcher": [],
-      "options": {
-        "cwd": "${workspaceFolder}/src/agents/cli"
-      }
-    },
+    }
+    
   ]
 }
