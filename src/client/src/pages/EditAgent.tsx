@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowLeft, RefreshCw, Trash2, Copy } from "lucide-react"
 import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api"
 import {
   AlertDialog,
@@ -299,7 +299,27 @@ export function EditAgent() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="rsyncSshKey">SSH Private Key</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="rsyncSshKey">SSH Private Key</Label>
+              {rsyncSshKey && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const textarea = document.getElementById("rsyncSshKey") as HTMLTextAreaElement;
+                    if (textarea) {
+                      textarea.select();
+                      navigator.clipboard.writeText(rsyncSshKey);
+                    }
+                  }}
+                  className="text-xs"
+                >
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copy
+                </Button>
+              )}
+            </div>
             <textarea
               id="rsyncSshKey"
               placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
@@ -312,6 +332,11 @@ export function EditAgent() {
             <p className="text-sm text-muted-foreground">
               Paste your SSH private key content here (optional). The key will be stored securely and used for rsync authentication.
             </p>
+            {rsyncSshKey && (
+              <p className="text-xs text-muted-foreground">
+                Key length: {rsyncSshKey.length} characters
+              </p>
+            )}
           </div>
 
           <div className="flex gap-4">

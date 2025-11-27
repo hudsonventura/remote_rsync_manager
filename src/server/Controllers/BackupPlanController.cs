@@ -39,9 +39,44 @@ public class BackupPlanController : ControllerBase
             return BadRequest(new { message = "Destination is required" });
         }
 
-        if (string.IsNullOrWhiteSpace(request.RsyncHost))
+        Agent? agent = null;
+        string rsyncHost;
+        string? rsyncUser;
+        int rsyncPort;
+        string? rsyncSshKey;
+
+        // If AgentId is provided, use agent's rsync configuration
+        if (request.AgentId.HasValue)
         {
-            return BadRequest(new { message = "Rsync host is required" });
+            agent = await _context.Agents.FindAsync(request.AgentId.Value);
+            if (agent == null)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
+
+            if (string.IsNullOrWhiteSpace(agent.hostname))
+            {
+                return BadRequest(new { message = "Agent does not have a hostname configured" });
+            }
+
+            // Use agent's rsync configuration
+            rsyncHost = agent.hostname;
+            rsyncUser = agent.rsyncUser;
+            rsyncPort = agent.rsyncPort;
+            rsyncSshKey = agent.rsyncSshKey;
+        }
+        else
+        {
+            // No agent provided, require rsyncHost
+            if (string.IsNullOrWhiteSpace(request.RsyncHost))
+            {
+                return BadRequest(new { message = "Rsync host is required when no agent is specified" });
+            }
+
+            rsyncHost = request.RsyncHost.Trim();
+            rsyncUser = request.RsyncUser?.Trim();
+            rsyncPort = request.RsyncPort ?? 22;
+            rsyncSshKey = request.RsyncSshKey?.Trim();
         }
 
         var backupPlan = new BackupPlan
@@ -53,10 +88,11 @@ public class BackupPlanController : ControllerBase
             source = request.Source.Trim(),
             destination = request.Destination.Trim(),
             active = request.Active,
-            rsyncHost = request.RsyncHost.Trim(),
-            rsyncUser = request.RsyncUser?.Trim(),
-            rsyncPort = request.RsyncPort ?? 22,
-            rsyncSshKey = request.RsyncSshKey?.Trim()
+            rsyncHost = rsyncHost,
+            rsyncUser = rsyncUser,
+            rsyncPort = rsyncPort,
+            rsyncSshKey = rsyncSshKey,
+            agent = agent // Set the agent relationship if provided
         };
 
         try
@@ -64,8 +100,8 @@ public class BackupPlanController : ControllerBase
             _context.BackupPlans.Add(backupPlan);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Backup plan created with ID: {BackupPlanId}, Name: {Name}, RsyncHost: {RsyncHost}", 
-                backupPlan.id, backupPlan.name, backupPlan.rsyncHost);
+            _logger.LogInformation("Backup plan created with ID: {BackupPlanId}, Name: {Name}, RsyncHost: {RsyncHost}, AgentId: {AgentId}", 
+                backupPlan.id, backupPlan.name, backupPlan.rsyncHost, request.AgentId);
 
             return CreatedAtAction(
                 nameof(GetBackupPlan),
@@ -203,6 +239,34 @@ public class BackupPlanController : ControllerBase
         }
     }
 
+
+    [HttpGet("/api/backupplan/agent/{agentId}")]
+    [ProducesResponseType(typeof(List<BackupPlan>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetBackupPlansByAgent(Guid agentId)
+    {
+        try
+        {
+            // Check if agent exists
+            var agentExists = await _context.Agents.AnyAsync(a => a.id == agentId);
+            if (!agentExists)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
+
+            // Get backup plans for the agent
+            var backupPlans = await _context.BackupPlans
+                .Where(bp => EF.Property<Guid?>(bp, "agentid") == agentId)
+                .ToListAsync();
+
+            return Ok(backupPlans);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving backup plans for agent {AgentId}", agentId);
+            return StatusCode(500, new { message = "An error occurred while retrieving backup plans" });
+        }
+    }
 
     [HttpDelete("/api/backupplan/{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
