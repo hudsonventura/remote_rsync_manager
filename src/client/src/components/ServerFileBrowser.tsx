@@ -6,7 +6,8 @@ import { Folder, File, ArrowLeft, X } from "lucide-react"
 
 interface FileSystemItem {
   name: string
-  path: string
+  pathName: string  // Full path including filename/directory name
+  path?: string     // Directory path without filename (for files)
   type: "file" | "directory"
   size?: number | null
   lastModified: string
@@ -30,14 +31,14 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
 
   useEffect(() => {
     if (open) {
-      // Use initialPath if provided, otherwise start with empty path
-      // Use the path as-is - if it's a directory, it will work; if it's a file, the API will handle it
-      let startPath = ""
+      // Use initialPath if provided, otherwise start with root path
+      // Determine default root path based on OS (but we'll use "/" for simplicity)
+      let startPath = "/"
       if (initialPath) {
         const normalizedPath = initialPath.trim()
         if (normalizedPath) {
           // Remove trailing slashes to normalize, but keep the path as-is
-          startPath = normalizedPath.replace(/[/\\]+$/, "")
+          startPath = normalizedPath.replace(/[/\\]+$/, "") || "/"
         }
       }
       setCurrentPath(startPath)
@@ -57,19 +58,9 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
       const data: FileSystemItem[] = await apiGet<FileSystemItem[]>(url)
       setItems(data)
       
-      // Determine the actual path from the items
-      if (data.length > 0) {
-        // Extract parent path from first item
-        const firstItem = data[0]
-        // Remove the item name from the path to get the directory path
-        const itemPath = firstItem.path
-        const itemName = firstItem.name
-        const directoryPath = itemPath.substring(0, itemPath.length - itemName.length - (itemPath.endsWith("/") || itemPath.endsWith("\\") ? 0 : 1))
-        setCurrentPath(directoryPath || (path || "/"))
-      } else {
-        // If no items, use the provided path or default
-        setCurrentPath(path || "/")
-      }
+      // Set the current path to what we requested (or default to "/")
+      const displayPath = path || "/"
+      setCurrentPath(displayPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load directory")
     } finally {
@@ -79,11 +70,13 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
 
   const handleItemClick = (item: FileSystemItem) => {
     if (item.type === "directory") {
-      const newPath = item.path
+      // For directories, use pathName (full path) to navigate into it
+      const newPath = item.pathName
       setPathHistory([...pathHistory, newPath])
       loadDirectory(newPath)
     } else {
-      onSelect(item.path)
+      // For files, use pathName (full path including filename)
+      onSelect(item.pathName)
       onClose()
     }
   }
@@ -163,7 +156,7 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
             <div className="space-y-1">
               {items.map((item) => (
                 <button
-                  key={item.path}
+                  key={item.pathName}
                   onClick={() => handleItemClick(item)}
                   className="w-full flex items-center gap-3 p-2 rounded hover:bg-accent text-left transition-colors"
                 >
