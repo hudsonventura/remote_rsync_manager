@@ -146,13 +146,17 @@ export function EditAgent() {
       if (err instanceof TypeError && err.message === "Failed to fetch") {
         setError("Unable to connect to the server. Please make sure the backend is running.")
       } else {
-        // Try to extract error message from response
+        // The apiPost helper already extracts the error message from the response
+        // so err.message should contain the message from the API
         let errorMessage = "An error occurred during validation"
+        
         if (err?.message) {
           errorMessage = err.message
         } else if (typeof err === 'string') {
           errorMessage = err
         }
+        
+        // Format multi-line error messages for better display
         setError(errorMessage)
         setValidationMessage(null)
       }
@@ -221,7 +225,7 @@ export function EditAgent() {
       </div>
 
       {error && (
-        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive whitespace-pre-line">
           {error}
         </div>
       )}

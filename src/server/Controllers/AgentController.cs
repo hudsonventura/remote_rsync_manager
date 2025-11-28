@@ -103,23 +103,163 @@ public class AgentController : ControllerBase
     [HttpPost("{id}/validate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> ValidateAgent(Guid id)
     {
-        var agent = await _context.Agents.FindAsync(id);
-
-        if (agent == null)
+        try
         {
-            return NotFound(new { message = "Agent not found" });
-        }
+            var agent = await _context.Agents.FindAsync(id);
 
-        // For rsync-based agents, validation just checks if configuration is present
-        return Ok(new { 
-            message = "Agent configuration is valid for rsync connections", 
-            hostname = agent.hostname,
-            hasSshKey = !string.IsNullOrWhiteSpace(agent.rsyncSshKey),
-            rsyncUser = agent.rsyncUser,
-            rsyncPort = agent.rsyncPort
-        });
+            if (agent == null)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
+
+            // Check if SSH key is configured
+            if (string.IsNullOrWhiteSpace(agent.rsyncSshKey))
+            {
+                return BadRequest(new { message = "Agent does not have SSH key configured. Please add an SSH private key to validate the connection." });
+            }
+
+            // Check if required fields are present
+            if (string.IsNullOrWhiteSpace(agent.hostname))
+            {
+                return BadRequest(new { message = "Agent hostname is required" });
+            }
+
+            int port = (agent.rsyncPort > 0) ? agent.rsyncPort : 22;
+            var user = string.IsNullOrWhiteSpace(agent.rsyncUser) ? "" : $"{agent.rsyncUser}@";
+
+            // Create temporary SSH key file
+            string? tempSshKeyFile = null;
+            try
+            {
+                tempSshKeyFile = CreateTempSshKeyFile(agent.rsyncSshKey);
+
+                // Test SSH connection with a simple command (echo test)
+                var sshCommand = "echo 'SSH connection test successful'";
+                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{agent.hostname} {sshCommand}";
+
+                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ssh",
+                    Arguments = sshArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Failed to start SSH process");
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("SSH connection validation failed with exit code {ExitCode}. Error: {Error}", process.ExitCode, error);
+                    
+                    // Provide more specific error messages
+                    string errorMessage;
+                    if (error.Contains("Permission denied") || error.Contains("publickey"))
+                    {
+                        errorMessage = "SSH authentication failed. Please verify that:\n" +
+                                     "- The SSH private key is correct\n" +
+                                     "- The corresponding public key is installed on the remote server\n" +
+                                     "- The SSH user has permission to access the server";
+                    }
+                    else if (error.Contains("Connection refused") || error.Contains("Connection timed out"))
+                    {
+                        errorMessage = $"SSH connection failed. Unable to connect to {agent.hostname}:{port}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname and port are correct\n" +
+                                     "- The SSH service is running on the remote server\n" +
+                                     "- The server is reachable from this machine\n" +
+                                     "- Firewall rules allow SSH connections";
+                    }
+                    else if (error.Contains("Host key verification failed"))
+                    {
+                        errorMessage = "SSH host key verification failed. This is handled automatically, but if the problem persists, please check the server's host key.";
+                    }
+                    else if (error.Contains("No route to host") || error.Contains("Network is unreachable"))
+                    {
+                        errorMessage = $"Network error: Unable to reach {agent.hostname}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname is correct\n" +
+                                     "- The server is online and reachable\n" +
+                                     "- Network connectivity is available";
+                    }
+                    else
+                    {
+                        errorMessage = $"SSH connection failed: {error.Trim()}\n" +
+                                     $"Exit code: {process.ExitCode}";
+                    }
+
+                    return StatusCode(503, new { message = errorMessage });
+                }
+
+                _logger.LogInformation("SSH connection validation successful for agent {AgentId} to {Hostname}", id, agent.hostname);
+
+                return Ok(new { 
+                    message = $"SSH connection successful to {agent.hostname}:{port}", 
+                    hostname = agent.hostname,
+                    port = port,
+                    user = agent.rsyncUser ?? "default",
+                    hasSshKey = true,
+                    rsyncUser = agent.rsyncUser,
+                    rsyncPort = agent.rsyncPort
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating SSH connection for agent {AgentId}", id);
+                
+                // Provide user-friendly error message
+                string errorMessage;
+                if (ex.Message.Contains("No such file or directory") || ex.Message.Contains("ssh: command not found"))
+                {
+                    errorMessage = "SSH client is not available on this system. Please install OpenSSH client.";
+                }
+                else if (ex.Message.Contains("Failed to start SSH process"))
+                {
+                    errorMessage = "Failed to start SSH process. Please ensure SSH client is properly installed and accessible.";
+                }
+                else
+                {
+                    errorMessage = $"Error testing SSH connection: {ex.Message}";
+                }
+
+                return StatusCode(500, new { message = errorMessage });
+            }
+            finally
+            {
+                // Clean up temporary SSH key file
+                if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && System.IO.File.Exists(tempSshKeyFile))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(tempSshKeyFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error validating agent {AgentId}", id);
+            return StatusCode(500, new { message = $"An error occurred while validating the agent: {ex.Message}" });
+        }
     }
 
     [HttpGet("{id}/ssh-key")]
