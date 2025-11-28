@@ -936,7 +936,7 @@ public class BackupPlanExecutor
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
             var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
 
-            _logger.LogInformation("Simulating backup plan {BackupPlanId}", backupPlan.id);
+            _logger.LogInformation("Simulating backup plan {BackupPlanId} using rsync --dry-run", backupPlan.id);
 
             // Get rsync configuration from Agent if available, otherwise from BackupPlan
             var rsyncConfig = GetRsyncConfig(backupPlan);
@@ -964,105 +964,30 @@ public class BackupPlanExecutor
 
             _logger.LogInformation("Created simulation execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
 
-            // Get file system items from source using rsync
-            var sourceFileSystemItems = await GetRsyncFileSystemItemsAsync(backupPlan, rsyncConfig);
-
-            _logger.LogInformation("Retrieved {Count} file system items from rsync source {Host} for path {Source}",
-                sourceFileSystemItems.Count, rsyncConfig.Host, backupPlan.source);
-
-            // Get file system items from local destination
-            var destinationFileSystemItems = GetLocalFileSystemItems(backupPlan.destination);
-
-            _logger.LogInformation("Retrieved {Count} file system items from local destination {Destination}",
-                destinationFileSystemItems.Count, backupPlan.destination);
-
-            // Compare source and destination to determine what to copy and delete
-            var comparisonResult = CompareFileSystemItems(
-                sourceFileSystemItems,
-                destinationFileSystemItems,
-                backupPlan.source,
-                backupPlan.destination);
-
-            // Build simulation result
-            var simulationResult = new SimulationResult();
-            var allItems = new List<SimulationItem>();
-
-            // Process new items (to be copied) - create log entries
-            foreach (var item in comparisonResult.NewItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", "Does not exist on destination");
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Copy",
-                        Reason = "Does not exist on destination"
-                    });
-                }
-            }
-
-            // Process edited items (to be copied) - create log entries
-            foreach (var item in comparisonResult.EditedItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    var destItem = destinationFileSystemItems.FirstOrDefault(d => d.Name == item.Name);
-                    var reason = $"Changed on source (size: {destItem?.Size ?? 0} -> {item.Size})";
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", reason);
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Copy",
-                        Reason = reason
-                    });
-                }
-            }
-
-            // Process deleted items (to be deleted) - create log entries
-            foreach (var item in comparisonResult.DeletedItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Delete", "Does not exist on source");
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Delete",
-                        Reason = "Does not exist on source"
-                    });
-                }
-            }
-
-            // Log ignored files (files that exist in both with same size)
-            await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
+            // Run rsync with --dry-run to get what would be transferred
+            var simulationItems = await ExecuteRsyncDryRunAsync(backupPlan, rsyncConfig, executionId, logContext);
 
             // Sort by action (Copy first, then Delete), then by filename
-            allItems = allItems
+            var sortedItems = simulationItems
                 .OrderBy(i => i.Action == "Delete") // Copy items first (false < true)
                 .ThenBy(i => i.FileName)
                 .ToList();
 
-            simulationResult.Items = allItems;
-            simulationResult.TotalItems = allItems.Count;
-            simulationResult.ItemsToCopy = allItems.Count(i => i.Action == "Copy");
-            simulationResult.ItemsToDelete = allItems.Count(i => i.Action == "Delete");
+            // Build simulation result
+            var simulationResult = new SimulationResult
+            {
+                Items = sortedItems,
+                TotalItems = sortedItems.Count,
+                ItemsToCopy = sortedItems.Count(i => i.Action == "Copy"),
+                ItemsToDelete = sortedItems.Count(i => i.Action == "Delete")
+            };
 
             // Update execution end time
             execution.endDateTime = DateTime.UtcNow;
             await logContext.SaveChangesAsync();
 
-            _logger.LogInformation(
-                "Simulation complete: {TotalCount} items, {CopyCount} to copy, {DeleteCount} to delete",
-                simulationResult.TotalItems,
-                simulationResult.ItemsToCopy,
-                simulationResult.ItemsToDelete);
+            _logger.LogInformation("Simulation complete: {TotalItems} items, {CopyCount} to copy, {DeleteCount} to delete",
+                simulationResult.TotalItems, simulationResult.ItemsToCopy, simulationResult.ItemsToDelete);
 
             // Create notification
             try
@@ -1113,6 +1038,249 @@ public class BackupPlanExecutor
             throw;
         }
     }
+
+    private async Task<List<SimulationItem>> ExecuteRsyncDryRunAsync(BackupPlan backupPlan, RsyncConfig rsyncConfig, Guid executionId, LogDbContext logContext)
+    {
+        _logger.LogInformation("Starting rsync dry-run simulation from {Source} to {Destination}", backupPlan.source, backupPlan.destination);
+
+        // Ensure destination directory exists (for rsync to work, even in dry-run)
+        if (!Directory.Exists(backupPlan.destination))
+        {
+            Directory.CreateDirectory(backupPlan.destination);
+            _logger.LogInformation("Created destination directory: {Path}", backupPlan.destination);
+        }
+
+        // Build rsync command with --dry-run flag
+        var rsyncSource = BuildRsyncSource(rsyncConfig, backupPlan.source);
+        var rsyncArgs = $"--archive --verbose --delete --itemize-changes --dry-run \"{rsyncSource}\" \"{backupPlan.destination}\"";
+
+        _logger.LogInformation("Executing rsync dry-run command: rsync {Args}", rsyncArgs);
+
+        var processStartInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "rsync",
+            Arguments = rsyncArgs,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        var simulationItems = new List<SimulationItem>();
+
+        // Create temporary SSH key file if SSH key content is provided
+        string? tempSshKeyFile = null;
+        try
+        {
+            tempSshKeyFile = CreateTempSshKeyFile(rsyncConfig);
+
+            // Add SSH options if configured
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile))
+            {
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -i \"{tempSshKeyFile}\" -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
+            }
+            else
+            {
+                processStartInfo.Environment["RSYNC_RSH"] = $"ssh -p {rsyncConfig.Port} -o StrictHostKeyChecking=no";
+            }
+
+            using var process = System.Diagnostics.Process.Start(processStartInfo);
+            if (process == null)
+            {
+                throw new InvalidOperationException("Failed to start rsync process");
+            }
+
+            // Read output line by line to parse what would be transferred
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                _logger.LogDebug("Rsync dry-run output: {Line}", line);
+
+                // Parse rsync itemize-changes output
+                // Format examples:
+                // >f+++++++++ file.txt (new file)
+                // >f.st...... file.txt (file with timestamp change)
+                // >f.s...... file.txt (file with size change)
+                // *deleting   oldfile.txt (file to delete)
+                // cd+++++++++ dirname/ (new directory)
+                
+                var simulationItem = ParseRsyncDryRunOutput(line, backupPlan.source, backupPlan.destination);
+                if (simulationItem != null)
+                {
+                    simulationItems.Add(simulationItem);
+                    
+                    // Create log entry for this item
+                    var fileSystemItem = new FileSystemItem
+                    {
+                        Name = simulationItem.FileName,
+                        PathName = simulationItem.FilePath,
+                        Type = simulationItem.Action == "Delete" ? "file" : "file", // Assume file for now
+                        Size = simulationItem.Size
+                    };
+                    
+                    await LogFileOperation(logContext, backupPlan.id, executionId, fileSystemItem, simulationItem.Action, simulationItem.Reason);
+                }
+            }
+
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogError("Rsync dry-run command failed with exit code {ExitCode}: {Error}", process.ExitCode, error);
+                throw new InvalidOperationException($"Rsync dry-run failed: {error}");
+            }
+
+            _logger.LogInformation("Rsync dry-run completed successfully. Found {Count} items to transfer", simulationItems.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing rsync dry-run command");
+            throw;
+        }
+        finally
+        {
+            // Clean up temporary SSH key file
+            if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && File.Exists(tempSshKeyFile))
+            {
+                try
+                {
+                    File.Delete(tempSshKeyFile);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                }
+            }
+        }
+
+        return simulationItems;
+    }
+
+    private SimulationItem? ParseRsyncDryRunOutput(string line, string sourceBasePath, string destinationBasePath)
+    {
+        try
+        {
+            // Skip summary lines and empty lines
+            if (string.IsNullOrWhiteSpace(line) || 
+                line.StartsWith("sending incremental") || 
+                line.StartsWith("total size") ||
+                line.StartsWith("sent ") ||
+                line.StartsWith("receiving "))
+            {
+                return null;
+            }
+
+            // Parse deletion: *deleting   filename
+            if (line.StartsWith("*deleting"))
+            {
+                var fileName = line.Substring("*deleting".Length).Trim();
+                var filePath = Path.Combine(destinationBasePath, fileName).Replace('\\', '/');
+                
+                return new SimulationItem
+                {
+                    FileName = Path.GetFileName(fileName),
+                    FilePath = filePath,
+                    Size = null,
+                    Action = "Delete",
+                    Reason = "Does not exist on source"
+                };
+            }
+
+            // Parse itemize-changes format: >f+++++++++ path/to/file
+            // Format: [action flags] filename
+            // Action flags:
+            //   > = receiving (will be copied)
+            //   < = sending (will be sent)
+            //   c = local change
+            //   h = hard link
+            //   . = no change
+            //   * = message
+            // File type:
+            //   f = file
+            //   d = directory
+            //   L = symlink
+            // Change flags:
+            //   + = item is new
+            //   s = size is different
+            //   t = timestamp is different
+            //   p = permissions are different
+            //   o = owner is different
+            //   g = group is different
+            //   u = checksum is different
+            //   . = no change
+            
+            if (line.Length > 12 && (line[0] == '>' || line[0] == '<' || line[0] == 'c'))
+            {
+                var flags = line.Substring(0, 12);
+                var fileName = line.Substring(12).Trim();
+                
+                // Skip directories (we only care about files for simulation)
+                if (flags[1] == 'd')
+                {
+                    return null;
+                }
+
+                // Only process files
+                if (flags[1] == 'f' || flags[1] == 'L')
+                {
+                    var action = "Copy";
+                    var reason = "New file";
+                    
+                    // Determine reason based on flags
+                    if (flags.Contains('+'))
+                    {
+                        reason = "New file";
+                    }
+                    else if (flags.Contains('s'))
+                    {
+                        reason = "Size changed";
+                    }
+                    else if (flags.Contains('t'))
+                    {
+                        reason = "Timestamp changed";
+                    }
+                    else if (flags.Contains('u'))
+                    {
+                        reason = "Content changed";
+                    }
+                    else if (flags.Contains('p'))
+                    {
+                        reason = "Permissions changed";
+                    }
+
+                    // Build full path
+                    var filePath = fileName;
+                    if (!Path.IsPathRooted(fileName))
+                    {
+                        filePath = Path.Combine(destinationBasePath, fileName).Replace('\\', '/');
+                    }
+
+                    return new SimulationItem
+                    {
+                        FileName = Path.GetFileName(fileName),
+                        FilePath = filePath,
+                        Size = null, // Size not available in itemize output
+                        Action = action,
+                        Reason = reason
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error parsing rsync dry-run output line: {Line}", line);
+        }
+
+        return null;
+    }
+
+    // OLD METHOD - REMOVED: Now using rsync --dry-run for simulation
+    // The old method compared file lists manually, but now we use rsync --dry-run
+    // which is more accurate and shows exactly what rsync would do
 
     private async Task LogFileOperation(LogDbContext logContext, Guid backupPlanId, Guid executionId, FileSystemItem item, string action, string reason)
     {
