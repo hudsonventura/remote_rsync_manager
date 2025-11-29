@@ -339,6 +339,7 @@ public class BackupPlanController : ControllerBase
         try
         {
             var backupPlan = await _context.BackupPlans
+                .Include(bp => bp.agent)
                 .FirstOrDefaultAsync(bp => bp.id == id);
 
             if (backupPlan == null)
