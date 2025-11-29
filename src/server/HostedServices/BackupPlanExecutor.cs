@@ -211,6 +211,9 @@ public class BackupPlanExecutor
             _logger.LogInformation("Rsync finished successfully. Exit code: {ExitCode}, Duration: {Duration}ms", 
                 process.ExitCode, duration.TotalMilliseconds);
 
+            // Parse statistics from rsync output
+            ParseRsyncStatistics(output, result, duration.TotalSeconds);
+
             // Parse output for simulation mode
             if (isSimulation)
             {
@@ -426,6 +429,195 @@ public class BackupPlanExecutor
         result.TotalItems = items.Count;
         result.ItemsToCopy = items.Count(i => i.Action == "Copy");
         result.ItemsToDelete = items.Count(i => i.Action == "Delete");
+    }
+
+    private void ParseRsyncStatistics(string output, ExecutionResult result, double durationSeconds)
+    {
+        result.DurationSeconds = durationSeconds;
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+
+            // Number of files: 201 (reg: 163, dir: 38)
+            if (trimmedLine.StartsWith("Number of files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.]+)\s+\(reg:\s+([\d.]+),\s+dir:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.TotalFiles = ParseNumber(match.Groups[1].Value);
+                    result.RegularFiles = ParseNumber(match.Groups[2].Value);
+                    result.Directories = ParseNumber(match.Groups[3].Value);
+                }
+            }
+            // Number of created files: 1 (reg: 1)
+            else if (trimmedLine.StartsWith("Number of created files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of created files:\s+([\d.]+)\s+\(reg:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.CreatedFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Number of deleted files: 1 (reg: 1)
+            else if (trimmedLine.StartsWith("Number of deleted files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of deleted files:\s+([\d.]+)\s+\(reg:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.DeletedFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Number of regular files transferred: 1
+            else if (trimmedLine.StartsWith("Number of regular files transferred:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of regular files transferred:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TransferredFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Total file size: 42.076.393 bytes
+            else if (trimmedLine.StartsWith("Total file size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total file size:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.TotalFileSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Total transferred file size: 0 bytes
+            else if (trimmedLine.StartsWith("Total transferred file size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total transferred file size:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.TotalTransferredSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Literal data: 0 bytes
+            else if (trimmedLine.StartsWith("Literal data:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Literal data:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.LiteralData = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Matched data: 0 bytes
+            else if (trimmedLine.StartsWith("Matched data:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Matched data:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.MatchedData = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // File list size: 4.529
+            else if (trimmedLine.StartsWith("File list size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list size:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.FileListSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // File list generation time: 0,001 seconds
+            else if (trimmedLine.StartsWith("File list generation time:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list generation time:\s+([\d,]+)\s+seconds");
+                if (match.Success)
+                {
+                    result.FileListGenerationTime = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // File list transfer time: 0,000 seconds
+            else if (trimmedLine.StartsWith("File list transfer time:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list transfer time:\s+([\d,]+)\s+seconds");
+                if (match.Success)
+                {
+                    result.FileListTransferTime = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // Total bytes sent: 90
+            else if (trimmedLine.StartsWith("Total bytes sent:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total bytes sent:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TotalBytesSent = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Total bytes received: 4.620
+            else if (trimmedLine.StartsWith("Total bytes received:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total bytes received:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TotalBytesReceived = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // sent 90 bytes  received 4.620 bytes  9.420,00 bytes/sec
+            else if (trimmedLine.StartsWith("sent") && trimmedLine.Contains("bytes/sec"))
+            {
+                var match = Regex.Match(trimmedLine, @"sent\s+[\d.]+\s+bytes\s+received\s+[\d.]+\s+bytes\s+([\d.,]+)\s+bytes/sec");
+                if (match.Success)
+                {
+                    result.TransferSpeedBytesPerSecond = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // total size is 42.076.393  speedup is 8.933,42
+            else if (trimmedLine.StartsWith("total size is") && trimmedLine.Contains("speedup is"))
+            {
+                var match = Regex.Match(trimmedLine, @"total size is\s+[\d.]+\s+speedup is\s+([\d.,]+)");
+                if (match.Success)
+                {
+                    result.Speedup = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+        }
+
+        // Calculate average speed if not already parsed from output and duration is available
+        if (result.TransferSpeedBytesPerSecond == 0 && durationSeconds > 0 && result.TotalTransferredSize > 0)
+        {
+            result.TransferSpeedBytesPerSecond = result.TotalTransferredSize / durationSeconds;
+        }
+    }
+
+    private int ParseNumber(string value)
+    {
+        // Remove thousand separators (periods) and parse
+        var cleaned = value.Replace(".", "");
+        if (int.TryParse(cleaned, out var result))
+        {
+            return result;
+        }
+        return 0;
+    }
+
+    private long ParseBytes(string value)
+    {
+        // Remove thousand separators (periods) and parse
+        var cleaned = value.Replace(".", "");
+        if (long.TryParse(cleaned, out var result))
+        {
+            return result;
+        }
+        return 0;
+    }
+
+    private double ParseDecimal(string value)
+    {
+        // Replace comma with dot for decimal separator and remove thousand separators
+        var cleaned = value.Replace(".", "").Replace(",", ".");
+        if (double.TryParse(cleaned, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result))
+        {
+            return result;
+        }
+        return 0;
     }
 
     public async Task<ExecutionResult> SimulateBackupPlanAsync(BackupPlan backupPlan)
