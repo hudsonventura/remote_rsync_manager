@@ -30,6 +30,12 @@ public class BackupPlanExecutor
     {
         Agent? agent = backupPlan.agent;
 
+        if (agent == null)
+        {
+            _logger.LogError("Backup plan {BackupPlanId} does not have an agent configured", backupPlan.id);
+            throw new InvalidOperationException("Backup plan does not have an agent configured");
+        }
+
         if (string.IsNullOrWhiteSpace(agent.rsyncSshKey))
         {
             _logger.LogError("Agent {AgentId} does not have an SSH key configured", agent.id);
@@ -52,7 +58,7 @@ public class BackupPlanExecutor
                 rsyncArgs.Append("--dry-run ");
             }
             
-            rsyncArgs.Append("-avz --progress ");
+            rsyncArgs.Append("-avz --progress --delete --itemize-changes --stats ");
             
             // Build SSH command for -e option
             var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
@@ -60,9 +66,60 @@ public class BackupPlanExecutor
             
             var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
             
-            rsyncArgs.Append($"{backupPlan.destination} {sourcePath}");
+            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
 
-            _logger.LogInformation("Executing rsync: rsync {RsyncArgs}", rsyncArgs.ToString());
+            var fullCommand = $"rsync {rsyncArgs}";
+            var startTime = DateTime.UtcNow;
+
+            _logger.LogInformation("Rsync command: {Command}", fullCommand);
+            _logger.LogInformation("Starting rsync execution for backup plan {BackupPlanId} (Simulation: {IsSimulation})", backupPlan.id, isSimulation);
+
+            // Create backup execution and log entries
+            Guid executionId = Guid.NewGuid();
+            using (var logScope = _serviceScopeFactory.CreateScope())
+            {
+                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                
+                // Create BackupExecution
+                var backupExecution = new BackupExecution
+                {
+                    id = executionId,
+                    backupPlanId = backupPlan.id,
+                    name = $"{backupPlan.name} - {(isSimulation ? "Simulation" : "Execution")}",
+                    startDateTime = startTime
+                };
+                logContext.BackupExecutions.Add(backupExecution);
+
+                // Log rsync start
+                var startLogEntry = new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlan.id,
+                    executionId = executionId,
+                    datetime = startTime,
+                    fileName = "rsync-start",
+                    filePath = "",
+                    action = LogEntry.Action.System.ToString(),
+                    reason = $"Starting rsync execution (Simulation: {isSimulation})"
+                };
+                logContext.LogEntries.Add(startLogEntry);
+
+                // Log rsync command
+                var commandLogEntry = new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlan.id,
+                    executionId = executionId,
+                    datetime = startTime,
+                    fileName = "rsync-command",
+                    filePath = fullCommand,
+                    action = LogEntry.Action.System.ToString(),
+                    reason = "Rsync command executed"
+                };
+                logContext.LogEntries.Add(commandLogEntry);
+
+                await logContext.SaveChangesAsync();
+            }
 
             // Execute rsync
             var processStartInfo = new ProcessStartInfo
@@ -103,14 +160,53 @@ public class BackupPlanExecutor
 
             await process.WaitForExitAsync();
 
+            var endTime = DateTime.UtcNow;
+            var duration = endTime - startTime;
             var output = outputBuilder.ToString();
             var error = errorBuilder.ToString();
 
+            // Log rsync finish to database
+            using (var logScope = _serviceScopeFactory.CreateScope())
+            {
+                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                
+                // Update BackupExecution
+                var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                if (backupExecution != null)
+                {
+                    backupExecution.endDateTime = endTime;
+                }
+
+                // Log rsync finish
+                var finishDescription = process.ExitCode == 0
+                    ? $"Rsync finished successfully. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms"
+                    : $"Rsync finished with failure. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms, Error: {error}";
+
+                var finishLogEntry = new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlan.id,
+                    executionId = executionId,
+                    datetime = endTime,
+                    fileName = "rsync-finish",
+                    filePath = "",
+                    action = process.ExitCode == 0 ? LogEntry.Action.System.ToString() : LogEntry.Action.CopyError.ToString(),
+                    reason = finishDescription
+                };
+                logContext.LogEntries.Add(finishLogEntry);
+
+                await logContext.SaveChangesAsync();
+            }
+
             if (process.ExitCode != 0)
             {
-                _logger.LogError("Rsync failed with exit code {ExitCode}. Error: {Error}", process.ExitCode, error);
+                _logger.LogError("Rsync finished with failure. Exit code: {ExitCode}, Duration: {Duration}ms, Error: {Error}", 
+                    process.ExitCode, duration.TotalMilliseconds, error);
                 throw new Exception($"Rsync failed: {error}");
             }
+
+            _logger.LogInformation("Rsync finished successfully. Exit code: {ExitCode}, Duration: {Duration}ms", 
+                process.ExitCode, duration.TotalMilliseconds);
 
             // Parse output for simulation mode
             if (isSimulation)
@@ -119,7 +215,7 @@ public class BackupPlanExecutor
             }
             else
             {
-                _logger.LogInformation("Backup completed successfully");
+                _logger.LogInformation("Backup completed successfully for backup plan {BackupPlanId}", backupPlan.id);
             }
 
             return result;
