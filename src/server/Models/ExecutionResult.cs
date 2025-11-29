@@ -1,14 +1,14 @@
 namespace server.Models;
 
-public class SimulationResult
+public class ExecutionResult
 {
-    public List<SimulationItem> Items { get; set; } = new();
+    public List<ExecutionItems> Items { get; set; } = new();
     public int TotalItems { get; set; }
     public int ItemsToCopy { get; set; }
     public int ItemsToDelete { get; set; }
 }
 
-public class SimulationItem
+public class ExecutionItems
 {
     public string FileName { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;

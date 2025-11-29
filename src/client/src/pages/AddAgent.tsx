@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RefreshCw } from "lucide-react"
 import { apiPost } from "@/lib/api"
 
 export function AddAgent() {
@@ -13,7 +14,9 @@ export function AddAgent() {
   const [rsyncPort, setRsyncPort] = useState("22")
   const [rsyncSshKey, setRsyncSshKey] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -58,6 +61,71 @@ export function AddAgent() {
     }
   }
 
+  const handleValidate = async () => {
+    if (!hostname.trim()) {
+      setError("Hostname is required to validate the connection")
+      setValidationMessage(null)
+      return
+    }
+
+    if (!rsyncSshKey.trim()) {
+      setError("SSH private key is required to validate the connection")
+      setValidationMessage(null)
+      return
+    }
+
+    setIsValidating(true)
+    setValidationMessage(null)
+    setError(null)
+
+    try {
+      const token = sessionStorage.getItem("token")
+      if (!token) {
+        navigate("/login")
+        return
+      }
+
+      const result = await apiPost<{ 
+        message: string; 
+        hostname: string;
+        hasSshKey?: boolean;
+        rsyncUser?: string;
+        rsyncPort?: number;
+      }>(
+        "/api/agent/validate",
+        {
+          hostname: hostname.trim(),
+          rsyncUser: rsyncUser.trim() || null,
+          rsyncPort: rsyncPort ? parseInt(rsyncPort, 10) : 22,
+          rsyncSshKey: rsyncSshKey.trim(),
+        }
+      )
+      
+      setValidationMessage(`✓ ${result.message}`)
+      setError(null)
+    } catch (err: any) {
+      if (err instanceof TypeError && err.message === "Failed to fetch") {
+        setError("Unable to connect to the server. Please make sure the backend is running.")
+      } else {
+        // The apiPost helper already extracts the error message from the response
+        // so err.message should contain the message from the API
+        let errorMessage = "An error occurred during validation"
+        
+        if (err?.message) {
+          errorMessage = err.message
+        } else if (typeof err === 'string') {
+          errorMessage = err
+        }
+        
+        // Format multi-line error messages for better display
+        setError(errorMessage)
+        setValidationMessage(null)
+      }
+    } finally {
+      setIsValidating(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -70,7 +138,7 @@ export function AddAgent() {
       <div className="rounded-lg border bg-card p-6 shadow-sm max-w-2xl">
         <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
-            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive whitespace-pre-line">
               {error}
             </div>
           )}
@@ -78,6 +146,12 @@ export function AddAgent() {
           {success && (
             <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
               Agent created successfully! Redirecting...
+            </div>
+          )}
+
+          {validationMessage && (
+            <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
+              {validationMessage}
             </div>
           )}
 
@@ -90,7 +164,7 @@ export function AddAgent() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
@@ -107,7 +181,7 @@ export function AddAgent() {
               value={hostname}
               onChange={(e) => setHostname(e.target.value)}
               required
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
@@ -123,7 +197,7 @@ export function AddAgent() {
               placeholder="username"
               value={rsyncUser}
               onChange={(e) => setRsyncUser(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
@@ -139,7 +213,7 @@ export function AddAgent() {
               placeholder="22"
               value={rsyncPort}
               onChange={(e) => setRsyncPort(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
               min="1"
               max="65535"
@@ -156,7 +230,7 @@ export function AddAgent() {
               placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
               value={rsyncSshKey}
               onChange={(e) => setRsyncSshKey(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               rows={6}
               className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs max-w-md"
             />
@@ -166,14 +240,23 @@ export function AddAgent() {
           </div>
 
           <div className="flex gap-4">
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading || isValidating}>
               {isLoading ? "Creating..." : "Create Agent"}
             </Button>
             <Button
               type="button"
               variant="outline"
+              onClick={handleValidate}
+              disabled={isLoading || isValidating}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
+              {isValidating ? "Validating..." : "Validate Connection"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => navigate("/")}
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
             >
               Cancel
             </Button>

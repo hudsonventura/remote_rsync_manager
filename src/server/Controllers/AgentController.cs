@@ -100,6 +100,160 @@ public class AgentController : ControllerBase
         return Ok(agent);
     }
 
+    [HttpPost("validate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ValidateSshConnection([FromBody] ValidateSshConnectionRequest request)
+    {
+        try
+        {
+            // Check if required fields are present
+            if (string.IsNullOrWhiteSpace(request.Hostname))
+            {
+                return BadRequest(new { message = "Hostname is required" });
+            }
+
+            // Check if SSH key is configured
+            if (string.IsNullOrWhiteSpace(request.RsyncSshKey))
+            {
+                return BadRequest(new { message = "SSH private key is required to validate the connection." });
+            }
+
+            int port = (request.RsyncPort > 0) ? request.RsyncPort : 22;
+            var user = string.IsNullOrWhiteSpace(request.RsyncUser) ? "" : $"{request.RsyncUser}@";
+
+            // Create temporary SSH key file
+            string? tempSshKeyFile = null;
+            try
+            {
+                tempSshKeyFile = CreateTempSshKeyFile(request.RsyncSshKey);
+
+                // Test SSH connection with a simple command (echo test)
+                var sshCommand = "echo 'SSH connection test successful'";
+                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{request.Hostname.Trim()} {sshCommand}";
+
+                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ssh",
+                    Arguments = sshArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Failed to start SSH process");
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("SSH connection validation failed with exit code {ExitCode}. Error: {Error}", process.ExitCode, error);
+                    
+                    // Provide more specific error messages
+                    string errorMessage;
+                    if (error.Contains("Permission denied") || error.Contains("publickey"))
+                    {
+                        errorMessage = "SSH authentication failed. Please verify that:\n" +
+                                     "- The SSH private key is correct\n" +
+                                     "- The corresponding public key is installed on the remote server\n" +
+                                     "- The SSH user has permission to access the server";
+                    }
+                    else if (error.Contains("Connection refused") || error.Contains("Connection timed out"))
+                    {
+                        errorMessage = $"SSH connection failed. Unable to connect to {request.Hostname.Trim()}:{port}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname and port are correct\n" +
+                                     "- The SSH service is running on the remote server\n" +
+                                     "- The server is reachable from this machine\n" +
+                                     "- Firewall rules allow SSH connections";
+                    }
+                    else if (error.Contains("Host key verification failed"))
+                    {
+                        errorMessage = "SSH host key verification failed. This is handled automatically, but if the problem persists, please check the server's host key.";
+                    }
+                    else if (error.Contains("No route to host") || error.Contains("Network is unreachable"))
+                    {
+                        errorMessage = $"Network error: Unable to reach {request.Hostname.Trim()}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname is correct\n" +
+                                     "- The server is online and reachable\n" +
+                                     "- Network connectivity is available";
+                    }
+                    else
+                    {
+                        errorMessage = $"SSH connection failed: {error.Trim()}\n" +
+                                     $"Exit code: {process.ExitCode}";
+                    }
+
+                    return StatusCode(503, new { message = errorMessage });
+                }
+
+                _logger.LogInformation("SSH connection validation successful to {Hostname}", request.Hostname.Trim());
+
+                return Ok(new { 
+                    message = $"SSH connection successful to {request.Hostname.Trim()}:{port}", 
+                    hostname = request.Hostname.Trim(),
+                    port = port,
+                    user = request.RsyncUser ?? "default",
+                    hasSshKey = true,
+                    rsyncUser = request.RsyncUser,
+                    rsyncPort = request.RsyncPort
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating SSH connection");
+                
+                // Provide user-friendly error message
+                string errorMessage;
+                if (ex.Message.Contains("No such file or directory") || ex.Message.Contains("ssh: command not found"))
+                {
+                    errorMessage = "SSH client is not available on this system. Please install OpenSSH client.";
+                }
+                else if (ex.Message.Contains("Failed to start SSH process"))
+                {
+                    errorMessage = "Failed to start SSH process. Please ensure SSH client is properly installed and accessible.";
+                }
+                else
+                {
+                    errorMessage = $"Error testing SSH connection: {ex.Message}";
+                }
+
+                return StatusCode(500, new { message = errorMessage });
+            }
+            finally
+            {
+                // Clean up temporary SSH key file
+                if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && System.IO.File.Exists(tempSshKeyFile))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(tempSshKeyFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error validating SSH connection");
+            return StatusCode(500, new { message = $"An error occurred while validating the SSH connection: {ex.Message}" });
+        }
+    }
+
     [HttpPost("{id}/validate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -689,6 +843,14 @@ public class AgentController : ControllerBase
         public string Hostname { get; set; } = string.Empty;
         public string? RsyncUser { get; set; }
         public int? RsyncPort { get; set; }
+        public string? RsyncSshKey { get; set; }
+    }
+
+    public class ValidateSshConnectionRequest
+    {
+        public string Hostname { get; set; } = string.Empty;
+        public string? RsyncUser { get; set; }
+        public int RsyncPort { get; set; } = 22;
         public string? RsyncSshKey { get; set; }
     }
 }

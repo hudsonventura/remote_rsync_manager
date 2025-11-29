@@ -256,3 +256,14 @@ This project is licensed under the MIT License.
 
 Developed by [Hudson Ventura](https://github.com/hudsonventura)
 
+
+
+Migrations Logs:
+```bash
+dotnet ef migrations add logs1 --context LogDbContext --output-dir Migrations/LogDbContext
+```
+
+Migrations Logs:
+```bash
+dotnet ef migrations add context1 --context DBContext --output-dir Migrations/DBContext
+```

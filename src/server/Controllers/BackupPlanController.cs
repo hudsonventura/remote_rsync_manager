@@ -298,7 +298,7 @@ public class BackupPlanController : ControllerBase
     }
 
     [HttpPost("/api/backupplan/{id}/simulate")]
-    [ProducesResponseType(typeof(SimulationResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ExecutionResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> SimulateBackupPlan(Guid id)
