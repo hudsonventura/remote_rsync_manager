@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2, Loader2 } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2, Loader2, Copy, Check } from "lucide-react"
 import { apiGet } from "@/lib/api"
 import { formatDateTimeWithTimezone } from "@/components/TimezoneSelector"
 
@@ -50,6 +50,7 @@ interface ExecutionStats {
   status: string
   currentFileName: string | null
   currentFilePath: string | null
+  rsyncCommand: string
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -188,6 +189,9 @@ export function BackupLogs() {
 
   // Timezone from navbar selector
   const [timezone, setTimezone] = useState<string>("UTC")
+  
+  // Copy button state
+  const [copied, setCopied] = useState(false)
 
   // Listen for timezone changes from navbar
   useEffect(() => {
@@ -448,6 +452,18 @@ export function BackupLogs() {
     navigate(`/backup-plans/${planId}/logs`)
   }
 
+  const handleCopyCommand = async () => {
+    if (executionStats?.rsyncCommand) {
+      try {
+        await navigator.clipboard.writeText(executionStats.rsyncCommand)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch (err) {
+        console.error("Failed to copy command:", err)
+      }
+    }
+  }
+
   if (isLoading && !executionId) {
     return (
       <div className="space-y-6">
@@ -661,6 +677,42 @@ export function BackupLogs() {
                 </div>
               </div>
               
+              {/* Rsync Command */}
+              {executionStats.rsyncCommand && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">Rsync Command</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopyCommand}
+                        className="h-8"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-4 w-4 mr-2" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <div className="bg-muted rounded-md p-3">
+                      <code className="text-sm break-all font-mono">
+                        {executionStats.rsyncCommand}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+
+
               {/* Current File Being Processed */}
               {executionStats.currentFileName && executionStats.status !== "Finished" && (
                 <div className="mt-4 pt-4 border-t">

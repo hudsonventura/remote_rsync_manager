@@ -267,6 +267,12 @@ public class BackupLogController : ControllerBase
             double? durationSeconds = null;
             double? averageSpeedBytesPerSecond = null;
 
+            // Get rsync command from log entry
+            var commandLog = await _logContext.LogEntries
+                .Where(log => log.executionId == executionId && log.fileName == "rsync-command")
+                .FirstOrDefaultAsync();
+            var rsyncCommand = commandLog?.filePath ?? string.Empty;
+
             // Try to get transfer speed from rsync output (saved at the end of execution)
             var transferSpeedLog = await _logContext.LogEntries
                 .Where(log => log.executionId == executionId && 
@@ -358,7 +364,8 @@ public class BackupLogController : ControllerBase
                 AverageSpeedBytesPerSecond = averageSpeedBytesPerSecond,
                 Status = status,
                 CurrentFileName = execution.currentFileName,
-                CurrentFilePath = execution.currentFilePath
+                CurrentFilePath = execution.currentFilePath,
+                RsyncCommand = rsyncCommand
             };
 
             return Ok(stats);
@@ -623,6 +630,7 @@ public class ExecutionStatsResponse
     public string Status { get; set; } = "Unknown";
     public string? CurrentFileName { get; set; }
     public string? CurrentFilePath { get; set; }
+    public string RsyncCommand { get; set; } = string.Empty;
 }
 
 public class AllLogsEntryResponse
