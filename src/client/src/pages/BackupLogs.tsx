@@ -41,16 +41,29 @@ interface ExecutionStats {
   executionId: string
   startDateTime: string
   endDateTime: string | null
-  totalSize: number
-  fileCount: number
-  ignoredCount: number
-  deletedCount: number
-  durationSeconds: number | null
-  averageSpeedBytesPerSecond: number | null
   status: string
   currentFileName: string | null
   currentFilePath: string | null
   rsyncCommand: string
+  // Rsync statistics
+  totalFiles: number
+  regularFiles: number
+  directories: number
+  createdFiles: number
+  deletedFiles: number
+  transferredFiles: number
+  totalFileSize: number
+  totalTransferredSize: number
+  literalData: number
+  matchedData: number
+  fileListSize: number
+  fileListGenerationTime: number
+  fileListTransferTime: number
+  totalBytesSent: number
+  totalBytesReceived: number
+  transferSpeedBytesPerSecond: number
+  speedup: number
+  durationSeconds: number
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -636,46 +649,71 @@ export function BackupLogs() {
                   )
                 })()}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              
+              {/* Rsync Statistics Output Format */}
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Total Data Transferred</p>
-                  <p className="text-2xl font-bold">{formatFileSize(executionStats.totalSize)}</p>
+                  <p className="text-sm text-muted-foreground">Number of files</p>
+                  <p className="text-2xl font-bold">{executionStats.totalFiles.toLocaleString()} <small className="text-sm leading-none font-medium">(files: {executionStats.regularFiles.toLocaleString()}, dir: {executionStats.directories.toLocaleString()})</small></p>
                 </div>
+
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Transfered</p>
-                  <p className="text-2xl font-bold">{executionStats.fileCount.toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground">Number of created files</p>
+                  <p className="text-2xl font-bold">{executionStats.createdFiles.toLocaleString()}</p>
                 </div>
+
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Ignored</p>
-                  <p className="text-2xl font-bold">{executionStats.ignoredCount?.toLocaleString() ?? 0}</p>
+                  <p className="text-sm text-muted-foreground">Number of deleted files</p>
+                  <p className="text-2xl font-bold">{executionStats.deletedFiles.toLocaleString()}</p>
                 </div>
+
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Deleted</p>
-                  <p className="text-2xl font-bold">{executionStats.deletedCount?.toLocaleString() ?? 0}</p>
+                  <p className="text-sm text-muted-foreground">Number of regular files transferred</p>
+                  <p className="text-2xl font-bold">{executionStats.transferredFiles.toLocaleString()}</p>
                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-sm text-muted-foreground">Total file size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalFileSize)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-sm text-muted-foreground">Total transferred file size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalTransferredSize)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-sm text-muted-foreground">File list size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.fileListSize)}</p>
+                 </div>
+
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Duration</p>
-                  <p className="text-2xl font-bold">
-                    {executionStats.endDateTime ? formatDuration(executionStats.durationSeconds) : "Running..."}
-                  </p>
+                  <p className="text-sm text-muted-foreground">File list generation time</p>
+                  <p className="text-2xl font-bold">{executionStats.fileListGenerationTime.toFixed(3)} s</p>
                 </div>
+
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Average Transfer Speed</p>
-                  {(() => {
-                    const speed = formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)
-                    return (
-                      <div className="space-y-0.5">
-                        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                          {speed.bytes}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          ({speed.bits})
-                        </p>
-                      </div>
-                    )
-                  })()}
+                  <p className="text-sm text-muted-foreground">File list transfer time</p>
+                  <p className="text-2xl font-bold">{executionStats.fileListTransferTime.toFixed(3)} s</p>
                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-sm text-muted-foreground">Total bytes sent</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalBytesSent)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-sm text-muted-foreground">Total bytes received</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalBytesReceived)}</p>
+                 </div>
+
+                 
               </div>
+
+              <br />
+
               
               {/* Rsync Command */}
               {executionStats.rsyncCommand && (

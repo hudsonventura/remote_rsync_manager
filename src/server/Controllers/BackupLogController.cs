@@ -247,80 +247,133 @@ public class BackupLogController : ControllerBase
                 return NotFound(new { message = "Execution not found" });
             }
 
-            // Get all logs for this execution with action "Copy"
-            var copyLogs = await _logContext.LogEntries
-                .Where(log => log.executionId == executionId && log.action == "Copy")
-                .ToListAsync();
-
-            // Get ignored and deleted counts
-            var ignoredCount = await _logContext.LogEntries
-                .CountAsync(log => log.executionId == executionId && log.action == "Ignored");
-            
-            var deletedCount = await _logContext.LogEntries
-                .CountAsync(log => log.executionId == executionId && log.action == "Delete");
-
-            // Calculate total size (only for Copy actions)
-            var totalSize = copyLogs.Sum(l => l.size ?? 0);
-            var fileCount = copyLogs.Count;
-
-            // Calculate duration in seconds and average speed
-            double? durationSeconds = null;
-            double? averageSpeedBytesPerSecond = null;
-
             // Get rsync command from log entry
             var commandLog = await _logContext.LogEntries
                 .Where(log => log.executionId == executionId && log.fileName == "rsync-command")
                 .FirstOrDefaultAsync();
             var rsyncCommand = commandLog?.filePath ?? string.Empty;
 
-            // Try to get transfer speed from rsync output (saved at the end of execution)
-            var transferSpeedLog = await _logContext.LogEntries
-                .Where(log => log.executionId == executionId && 
-                             log.fileName == "rsync-transfer-speed" &&
-                             log.reason.StartsWith("TransferSpeed:"))
+            // Get rsync statistics from log entry
+            var statsLog = await _logContext.LogEntries
+                .Where(log => log.executionId == executionId && log.fileName == "rsync-stats")
                 .OrderByDescending(log => log.datetime)
                 .FirstOrDefaultAsync();
 
-            if (execution.endDateTime.HasValue)
+            // Initialize default values
+            var stats = new ExecutionStatsResponse
             {
-                // Backup finished - use actual duration
-                var duration = execution.endDateTime.Value - execution.startDateTime;
-                durationSeconds = duration.TotalSeconds;
+                ExecutionId = executionId,
+                StartDateTime = execution.startDateTime,
+                EndDateTime = execution.endDateTime,
+                Status = "Unknown",
+                CurrentFileName = execution.currentFileName,
+                CurrentFilePath = execution.currentFilePath,
+                RsyncCommand = rsyncCommand
+            };
 
-                // Use transfer speed from rsync output if available, otherwise calculate
-                if (transferSpeedLog != null)
+            // Parse statistics from log entry if available
+            if (statsLog != null)
+            {
+                var parts = statsLog.reason.Split('|');
+                foreach (var part in parts)
                 {
-                    var speedValue = transferSpeedLog.reason.Replace("TransferSpeed:", "");
-                    if (double.TryParse(speedValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var speed))
+                    var keyValue = part.Split(':');
+                    if (keyValue.Length == 2)
                     {
-                        averageSpeedBytesPerSecond = speed;
+                        var key = keyValue[0];
+                        var value = keyValue[1];
+                        
+                        switch (key)
+                        {
+                            case "TotalFiles":
+                                if (int.TryParse(value.Replace(".", ""), out var totalFiles))
+                                    stats.TotalFiles = totalFiles;
+                                break;
+                            case "RegularFiles":
+                                if (int.TryParse(value.Replace(".", ""), out var regularFiles))
+                                    stats.RegularFiles = regularFiles;
+                                break;
+                            case "Directories":
+                                if (int.TryParse(value.Replace(".", ""), out var directories))
+                                    stats.Directories = directories;
+                                break;
+                            case "CreatedFiles":
+                                if (int.TryParse(value.Replace(".", ""), out var createdFiles))
+                                    stats.CreatedFiles = createdFiles;
+                                break;
+                            case "DeletedFiles":
+                                if (int.TryParse(value.Replace(".", ""), out var deletedFiles))
+                                    stats.DeletedFiles = deletedFiles;
+                                break;
+                            case "TransferredFiles":
+                                if (int.TryParse(value.Replace(".", ""), out var transferredFiles))
+                                    stats.TransferredFiles = transferredFiles;
+                                break;
+                            case "TotalFileSize":
+                                if (long.TryParse(value.Replace(".", ""), out var totalFileSize))
+                                    stats.TotalFileSize = totalFileSize;
+                                break;
+                            case "TotalTransferredSize":
+                                if (long.TryParse(value.Replace(".", ""), out var totalTransferredSize))
+                                    stats.TotalTransferredSize = totalTransferredSize;
+                                break;
+                            case "LiteralData":
+                                if (long.TryParse(value.Replace(".", ""), out var literalData))
+                                    stats.LiteralData = literalData;
+                                break;
+                            case "MatchedData":
+                                if (long.TryParse(value.Replace(".", ""), out var matchedData))
+                                    stats.MatchedData = matchedData;
+                                break;
+                            case "FileListSize":
+                                if (long.TryParse(value.Replace(".", ""), out var fileListSize))
+                                    stats.FileListSize = fileListSize;
+                                break;
+                            case "FileListGenerationTime":
+                                if (double.TryParse(value.Replace(",", "."), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var genTime))
+                                    stats.FileListGenerationTime = genTime;
+                                break;
+                            case "FileListTransferTime":
+                                if (double.TryParse(value.Replace(",", "."), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var transferTime))
+                                    stats.FileListTransferTime = transferTime;
+                                break;
+                            case "TotalBytesSent":
+                                if (long.TryParse(value.Replace(".", ""), out var bytesSent))
+                                    stats.TotalBytesSent = bytesSent;
+                                break;
+                            case "TotalBytesReceived":
+                                if (long.TryParse(value.Replace(".", ""), out var bytesReceived))
+                                    stats.TotalBytesReceived = bytesReceived;
+                                break;
+                            case "TransferSpeed":
+                                if (double.TryParse(value.Replace(",", "."), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var speed))
+                                    stats.TransferSpeedBytesPerSecond = speed;
+                                break;
+                            case "Speedup":
+                                if (double.TryParse(value.Replace(",", "."), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var speedup))
+                                    stats.Speedup = speedup;
+                                break;
+                        }
                     }
                 }
-                
-                // Fallback to calculated speed if not available from rsync
-                if (!averageSpeedBytesPerSecond.HasValue && durationSeconds > 0)
-                {
-                    averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
-                }
+            }
+
+            // Calculate duration
+            if (execution.endDateTime.HasValue)
+            {
+                var duration = execution.endDateTime.Value - execution.startDateTime;
+                stats.DurationSeconds = duration.TotalSeconds;
             }
             else
             {
-                // Backup in progress - calculate real-time speed
                 var currentDuration = DateTime.UtcNow - execution.startDateTime;
-                durationSeconds = currentDuration.TotalSeconds;
-
-                // Calculate current average speed based on elapsed time
-                if (durationSeconds > 0 && totalSize > 0)
-                {
-                    averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
-                }
+                stats.DurationSeconds = currentDuration.TotalSeconds;
             }
 
             // Determine status based on milestone logs and execution completion
-            string status = "Unknown";
             if (execution.endDateTime.HasValue)
             {
-                status = "Finished";
+                stats.Status = "Finished";
             }
             else
             {
@@ -334,39 +387,22 @@ public class BackupLogController : ControllerBase
                 {
                     if (latestMilestone.reason.Contains("SourceAnalysisStarted"))
                     {
-                        status = "Analyzing";
+                        stats.Status = "Analyzing";
                     }
                     else if (latestMilestone.reason.Contains("CopiesStarted"))
                     {
-                        status = "Copying";
+                        stats.Status = "Copying";
                     }
                     else if (latestMilestone.reason.Contains("CopiesFinished"))
                     {
-                        status = "Finalizing";
+                        stats.Status = "Finalizing";
                     }
                 }
                 else
                 {
-                    status = "Starting";
+                    stats.Status = "Starting";
                 }
             }
-
-            var stats = new ExecutionStatsResponse
-            {
-                ExecutionId = executionId,
-                StartDateTime = execution.startDateTime,
-                EndDateTime = execution.endDateTime,
-                TotalSize = totalSize,
-                FileCount = fileCount,
-                IgnoredCount = ignoredCount,
-                DeletedCount = deletedCount,
-                DurationSeconds = durationSeconds,
-                AverageSpeedBytesPerSecond = averageSpeedBytesPerSecond,
-                Status = status,
-                CurrentFileName = execution.currentFileName,
-                CurrentFilePath = execution.currentFilePath,
-                RsyncCommand = rsyncCommand
-            };
 
             return Ok(stats);
         }
@@ -621,16 +657,30 @@ public class ExecutionStatsResponse
     public Guid ExecutionId { get; set; }
     public DateTime StartDateTime { get; set; }
     public DateTime? EndDateTime { get; set; }
-    public long TotalSize { get; set; }
-    public int FileCount { get; set; }
-    public int IgnoredCount { get; set; }
-    public int DeletedCount { get; set; }
-    public double? DurationSeconds { get; set; }
-    public double? AverageSpeedBytesPerSecond { get; set; }
     public string Status { get; set; } = "Unknown";
     public string? CurrentFileName { get; set; }
     public string? CurrentFilePath { get; set; }
     public string RsyncCommand { get; set; } = string.Empty;
+    
+    // Rsync statistics
+    public int TotalFiles { get; set; }
+    public int RegularFiles { get; set; }
+    public int Directories { get; set; }
+    public int CreatedFiles { get; set; }
+    public int DeletedFiles { get; set; }
+    public int TransferredFiles { get; set; }
+    public long TotalFileSize { get; set; }
+    public long TotalTransferredSize { get; set; }
+    public long LiteralData { get; set; }
+    public long MatchedData { get; set; }
+    public long FileListSize { get; set; }
+    public double FileListGenerationTime { get; set; }
+    public double FileListTransferTime { get; set; }
+    public long TotalBytesSent { get; set; }
+    public long TotalBytesReceived { get; set; }
+    public double TransferSpeedBytesPerSecond { get; set; }
+    public double Speedup { get; set; }
+    public double DurationSeconds { get; set; }
 }
 
 public class AllLogsEntryResponse
