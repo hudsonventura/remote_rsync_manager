@@ -135,13 +135,85 @@ public class BackupPlanExecutor
             using var process = new Process { StartInfo = processStartInfo };
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
+            var logEntriesBatch = new List<LogEntry>();
+            var lastSaveTime = DateTime.UtcNow;
+            var batchLock = new object();
+            const int BatchSaveIntervalSeconds = 2; // Save logs every 2 seconds
+            const int MaxBatchSize = 50; // Save when batch reaches 50 entries
 
             process.OutputDataReceived += (sender, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
-                    outputBuilder.AppendLine(e.Data);
-                    _logger.LogDebug("Rsync output: {Output}", e.Data);
+                    var line = e.Data;
+                    outputBuilder.AppendLine(line);
+                    _logger.LogDebug("Rsync output: {Output}", line);
+
+                    // Parse and log file operations in real-time
+                    var logEntry = ParseRsyncLine(line, backupPlan.id, executionId, DateTime.UtcNow);
+                    if (logEntry != null)
+                    {
+                        List<LogEntry>? batchToSave = null;
+                        
+                        lock (batchLock)
+                        {
+                            logEntriesBatch.Add(logEntry);
+                            
+                            var now = DateTime.UtcNow;
+                            if (logEntriesBatch.Count >= MaxBatchSize || 
+                                (now - lastSaveTime).TotalSeconds >= BatchSaveIntervalSeconds)
+                            {
+                                batchToSave = new List<LogEntry>(logEntriesBatch);
+                                logEntriesBatch.Clear();
+                                lastSaveTime = now;
+                            }
+                        }
+                        
+                        // Update BackupExecution with current file being processed
+                        if (!string.IsNullOrEmpty(logEntry.filePath))
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                    
+                                    var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                                    if (backupExecution != null)
+                                    {
+                                        backupExecution.currentFileName = logEntry.fileName;
+                                        backupExecution.currentFilePath = logEntry.filePath;
+                                        await logContext.SaveChangesAsync();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to update BackupExecution current file");
+                                }
+                            });
+                        }
+
+                        // Save batch if it's time or batch is full
+                        if (batchToSave != null && batchToSave.Count > 0)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                    logContext.LogEntries.AddRange(batchToSave);
+                                    await logContext.SaveChangesAsync();
+                                    _logger.LogDebug("Saved {Count} log entries to database", batchToSave.Count);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to save log entries batch: {Error}", ex.Message);
+                                }
+                            });
+                        }
+                    }
                 }
             };
 
@@ -165,8 +237,22 @@ public class BackupPlanExecutor
             var output = outputBuilder.ToString();
             var error = errorBuilder.ToString();
 
-            // Parse and log file operations to database (use start time as operations occurred during execution)
-            await ParseAndLogRsyncOutput(output, backupPlan.id, executionId, startTime);
+            // Save any remaining log entries in the batch
+            List<LogEntry> finalBatch;
+            lock (batchLock)
+            {
+                finalBatch = new List<LogEntry>(logEntriesBatch);
+                logEntriesBatch.Clear();
+            }
+            
+            if (finalBatch.Count > 0)
+            {
+                using var logScope = _serviceScopeFactory.CreateScope();
+                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                logContext.LogEntries.AddRange(finalBatch);
+                await logContext.SaveChangesAsync();
+                _logger.LogDebug("Saved final batch of {Count} log entries to database", finalBatch.Count);
+            }
 
             // Log rsync finish to database
             using (var logScope = _serviceScopeFactory.CreateScope())
@@ -243,139 +329,150 @@ public class BackupPlanExecutor
         }
     }
 
-    private async Task ParseAndLogRsyncOutput(string output, Guid backupPlanId, Guid executionId, DateTime timestamp)
+    private LogEntry? ParseRsyncLine(string line, Guid backupPlanId, Guid executionId, DateTime timestamp)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var logEntries = new List<LogEntry>();
-
-        foreach (var line in lines)
+        var trimmedLine = line.Trim();
+        
+        // Skip empty lines, progress lines, and stats lines
+        if (string.IsNullOrWhiteSpace(trimmedLine) ||
+            trimmedLine.StartsWith("receiving incremental file list") ||
+            trimmedLine.StartsWith("Number of files:") ||
+            trimmedLine.StartsWith("Number of created files:") ||
+            trimmedLine.StartsWith("Number of deleted files:") ||
+            trimmedLine.StartsWith("Number of regular files transferred:") ||
+            trimmedLine.StartsWith("Total file size:") ||
+            trimmedLine.StartsWith("Total transferred file size:") ||
+            trimmedLine.StartsWith("Literal data:") ||
+            trimmedLine.StartsWith("Matched data:") ||
+            trimmedLine.StartsWith("File list size:") ||
+            trimmedLine.StartsWith("File list generation time:") ||
+            trimmedLine.StartsWith("File list transfer time:") ||
+            trimmedLine.StartsWith("Total bytes sent:") ||
+            trimmedLine.StartsWith("Total bytes received:") ||
+            (trimmedLine.StartsWith("sent") && trimmedLine.Contains("bytes/sec")) ||
+            trimmedLine.StartsWith("total size is") ||
+            trimmedLine.Contains("%") && trimmedLine.Contains("kB/s") ||
+            trimmedLine.StartsWith("Warning:") ||
+            trimmedLine.StartsWith("Building file list"))
         {
-            var trimmedLine = line.Trim();
-            
-            // Parse deletion lines (e.g., "*deleting   license.rtf")
-            if (trimmedLine.StartsWith("*deleting"))
+            return null;
+        }
+        
+        // Parse deletion lines (e.g., "*deleting   license.rtf")
+        if (trimmedLine.StartsWith("*deleting"))
+        {
+            var match = Regex.Match(trimmedLine, @"^\*deleting\s+(.+)$");
+            if (match.Success)
             {
-                var match = Regex.Match(trimmedLine, @"^\*deleting\s+(.+)$");
-                if (match.Success)
+                var filePath = match.Groups[1].Value.Trim();
+                var fileName = Path.GetFileName(filePath);
+                
+                return new LogEntry
                 {
-                    var filePath = match.Groups[1].Value.Trim();
-                    var fileName = Path.GetFileName(filePath);
-                    
-                    logEntries.Add(new LogEntry
-                    {
-                        id = Guid.NewGuid(),
-                        backupPlanId = backupPlanId,
-                        executionId = executionId,
-                        datetime = timestamp,
-                        fileName = fileName,
-                        filePath = filePath,
-                        action = LogEntry.Action.Delete.ToString(),
-                        reason = "File deleted by rsync"
-                    });
-                }
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlanId,
+                    executionId = executionId,
+                    datetime = timestamp,
+                    fileName = fileName,
+                    filePath = filePath,
+                    action = LogEntry.Action.Delete.ToString(),
+                    reason = "File deleted by rsync"
+                };
             }
-            // Parse itemize-changes lines (e.g., ">f+++++++++ wefwef" or ".d..t...... ./")
-            else if (trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("."))
+        }
+        
+        // Parse itemize-changes lines (e.g., ">f+++++++++ wefwef" or ".d..t...... ./")
+        if (trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("."))
+        {
+            // Skip lines that are just directory timestamp updates (e.g., ".d..t...... ./")
+            if (trimmedLine.StartsWith(".") && (trimmedLine.Contains("./") || trimmedLine.TrimEnd() == "."))
             {
-                // Skip lines that are just directory timestamp updates (e.g., ".d..t...... ./")
-                if (trimmedLine.StartsWith(".") && (trimmedLine.Contains("./") || trimmedLine.TrimEnd() == "."))
+                return null;
+            }
+
+            // Match pattern: >f+++++++++ filepath or <f+++++++++ filepath or .d..t...... filepath
+            var match = Regex.Match(trimmedLine, @"^([<>.])([fdLDS])([.+\-<>chstT]+)\s+(.+)$");
+            if (match.Success)
+            {
+                var direction = match.Groups[1].Value; // '>' receiving, '<' sending, '.' update
+                var itemType = match.Groups[2].Value; // 'f' file, 'd' directory, 'L' symlink, etc.
+                var flags = match.Groups[3].Value;
+                var filePath = match.Groups[4].Value.Trim();
+                
+                // Skip if path is just "./" or "." or empty
+                if (string.IsNullOrWhiteSpace(filePath) || filePath == "./" || filePath == ".")
                 {
-                    continue;
+                    return null;
+                }
+                
+                var fileName = Path.GetFileName(filePath);
+                if (string.IsNullOrWhiteSpace(fileName))
+                {
+                    fileName = filePath;
                 }
 
-                // Match pattern: >f+++++++++ filepath or <f+++++++++ filepath or .d..t...... filepath
-                var match = Regex.Match(trimmedLine, @"^([<>.])([fdLDS])([.+\-<>chstT]+)\s+(.+)$");
-                if (match.Success)
+                // Determine action based on flags
+                LogEntry.Action action;
+                string reason;
+
+                if (flags.Contains("+++++++++") || flags.Contains("+++++"))
                 {
-                    var direction = match.Groups[1].Value; // '>' receiving, '<' sending, '.' update
-                    var itemType = match.Groups[2].Value; // 'f' file, 'd' directory, 'L' symlink, etc.
-                    var flags = match.Groups[3].Value;
-                    var filePath = match.Groups[4].Value.Trim();
-                    
-                    // Skip if path is just "./" or "." or empty
-                    if (string.IsNullOrWhiteSpace(filePath) || filePath == "./" || filePath == ".")
-                    {
-                        continue;
-                    }
-                    
-                    var fileName = Path.GetFileName(filePath);
-                    if (string.IsNullOrWhiteSpace(fileName))
-                    {
-                        fileName = filePath;
-                    }
-
-                    // Determine action based on flags
-                    LogEntry.Action action;
-                    string reason;
-
-                    if (flags.Contains("+++++++++") || flags.Contains("+++++"))
-                    {
-                        // New file/directory
-                        action = LogEntry.Action.Copy;
-                        reason = itemType == "d" ? "New directory created" : "New file copied";
-                    }
-                    else if (flags.Contains(">"))
-                    {
-                        // Size changed
-                        action = LogEntry.Action.Copy;
-                        reason = "File size changed";
-                    }
-                    else if (flags.Contains("c"))
-                    {
-                        // Checksum changed
-                        action = LogEntry.Action.Copy;
-                        reason = "File checksum changed";
-                    }
-                    else if (flags.Contains("t") || flags.Contains("T"))
-                    {
-                        // Timestamp changed
-                        action = LogEntry.Action.Copy;
-                        reason = "File timestamp updated";
-                    }
-                    else if (flags.Contains("h"))
-                    {
-                        // Hard link
-                        action = LogEntry.Action.Copy;
-                        reason = "Hard link created";
-                    }
-                    else if (flags.Contains("s"))
-                    {
-                        // Size changed
-                        action = LogEntry.Action.Copy;
-                        reason = "File size changed";
-                    }
-                    else
-                    {
-                        // Other changes
-                        action = LogEntry.Action.Copy;
-                        reason = "File updated";
-                    }
-
-                    logEntries.Add(new LogEntry
-                    {
-                        id = Guid.NewGuid(),
-                        backupPlanId = backupPlanId,
-                        executionId = executionId,
-                        datetime = timestamp,
-                        fileName = fileName,
-                        filePath = filePath,
-                        action = action.ToString(),
-                        reason = reason
-                    });
+                    // New file/directory
+                    action = LogEntry.Action.Copy;
+                    reason = itemType == "d" ? "New directory created" : "New file copied";
                 }
+                else if (flags.Contains(">"))
+                {
+                    // Size changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File size changed";
+                }
+                else if (flags.Contains("c"))
+                {
+                    // Checksum changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File checksum changed";
+                }
+                else if (flags.Contains("t") || flags.Contains("T"))
+                {
+                    // Timestamp changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File timestamp updated";
+                }
+                else if (flags.Contains("h"))
+                {
+                    // Hard link
+                    action = LogEntry.Action.Copy;
+                    reason = "Hard link created";
+                }
+                else if (flags.Contains("s"))
+                {
+                    // Size changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File size changed";
+                }
+                else
+                {
+                    // Other changes
+                    action = LogEntry.Action.Copy;
+                    reason = "File updated";
+                }
+
+                return new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlanId,
+                    executionId = executionId,
+                    datetime = timestamp,
+                    fileName = fileName,
+                    filePath = filePath,
+                    action = action.ToString(),
+                    reason = reason
+                };
             }
         }
 
-        // Save all log entries to database
-        if (logEntries.Count > 0)
-        {
-            using var logScope = _serviceScopeFactory.CreateScope();
-            var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
-            logContext.LogEntries.AddRange(logEntries);
-            await logContext.SaveChangesAsync();
-            
-            _logger.LogInformation("Logged {Count} file operations to database", logEntries.Count);
-        }
+        return null;
     }
 
     private void ParseRsyncOutput(string output, ExecutionResult result)
