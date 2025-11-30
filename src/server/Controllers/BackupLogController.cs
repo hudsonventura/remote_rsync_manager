@@ -267,14 +267,32 @@ public class BackupLogController : ControllerBase
             double? durationSeconds = null;
             double? averageSpeedBytesPerSecond = null;
 
+            // Try to get transfer speed from rsync output (saved at the end of execution)
+            var transferSpeedLog = await _logContext.LogEntries
+                .Where(log => log.executionId == executionId && 
+                             log.fileName == "rsync-transfer-speed" &&
+                             log.reason.StartsWith("TransferSpeed:"))
+                .OrderByDescending(log => log.datetime)
+                .FirstOrDefaultAsync();
+
             if (execution.endDateTime.HasValue)
             {
                 // Backup finished - use actual duration
                 var duration = execution.endDateTime.Value - execution.startDateTime;
                 durationSeconds = duration.TotalSeconds;
 
-                // Calculate average speed (bytes per second)
-                if (durationSeconds > 0)
+                // Use transfer speed from rsync output if available, otherwise calculate
+                if (transferSpeedLog != null)
+                {
+                    var speedValue = transferSpeedLog.reason.Replace("TransferSpeed:", "");
+                    if (double.TryParse(speedValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var speed))
+                    {
+                        averageSpeedBytesPerSecond = speed;
+                    }
+                }
+                
+                // Fallback to calculated speed if not available from rsync
+                if (!averageSpeedBytesPerSecond.HasValue && durationSeconds > 0)
                 {
                     averageSpeedBytesPerSecond = totalSize / durationSeconds.Value;
                 }

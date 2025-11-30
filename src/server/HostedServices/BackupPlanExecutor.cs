@@ -300,6 +300,30 @@ public class BackupPlanExecutor
             // Parse statistics from rsync output
             ParseRsyncStatistics(output, result, duration.TotalSeconds);
 
+            // Save transfer speed to database at the end
+            if (!isSimulation && process.ExitCode == 0 && result.TransferSpeedBytesPerSecond > 0)
+            {
+                using (var logScope = _serviceScopeFactory.CreateScope())
+                {
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Save transfer speed as a special log entry
+                    var transferSpeedLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = endTime,
+                        fileName = "rsync-transfer-speed",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = $"TransferSpeed:{result.TransferSpeedBytesPerSecond}"
+                    };
+                    logContext.LogEntries.Add(transferSpeedLogEntry);
+                    await logContext.SaveChangesAsync();
+                }
+            }
+
             // Parse output for simulation mode
             if (isSimulation)
             {
