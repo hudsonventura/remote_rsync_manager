@@ -8,18 +8,8 @@ src/server/bin/*
 .env
 .env.local
 .env.*.local
-src/server/remember.db*
-src/server/logs.db*
+
 
 # Data directory
 data/
-
-# Agents
-src/agents/cli/obj/*
-src/agents/cli/bin/*
-src/agents/desktop/obj/*
-src/agents/desktop/bin/*
-
-src/agents/common/obj/*
-src/agents/common/bin/*
 HTTPTests/environments/PROD.bru

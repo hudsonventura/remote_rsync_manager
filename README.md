@@ -96,6 +96,11 @@ This step is required because the backend uses a self-signed certificate for HTT
    - **SSH User**: username to use on SSH/Rsync connection  
    - **SSH Port**: port to use on SSH/Rsync connection. Default 22
    - **SSH Private Key**: key to use on SSH/Rsync connection  
+
+> [!CAUTION] 
+> Note its necessary use ssh private key. To generate use the `Generate SSH Key` code block.  
+> Use these commands to generate an SSH key pair and copy the public key to the remote server. Replace `user@remote-ip` with your username and hostname
+
    
 
 ![Agent Code](assets/agent_add.png)
@@ -111,7 +116,7 @@ This step is required because the backend uses a self-signed certificate for HTT
 1. Navigate to the agent's backup plans page:
    - Click on **"Agents"** in the sidebar
    - Click on an agent name to view its backup plans
-   - Or click the **"Edit"** button next to an agent and navigate to backup plans
+   
 
 2. Click the **"Add Backup Plan"** button
 
@@ -190,11 +195,10 @@ Once you're satisfied with the simulation results, you can execute the backup:
 ### Database
 
 The application uses SQLite databases on `data` dir on server:
-- `remember.db` - Main database (agents, backup plans, users)
+- `server.db` - Main database (agents, backup plans, users)
 - `logs.db` - Backup operation logs
 
-And on agents:
-- `agent.db` - Store JWT of the server authorized
+
 
 ## API Testing
 

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, Copy, Check } from "lucide-react"
 import { apiPost } from "@/lib/api"
 
 export function AddAgent() {
@@ -18,6 +18,7 @@ export function AddAgent() {
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -236,6 +237,53 @@ export function AddAgent() {
             />
             <p className="text-sm text-muted-foreground">
               Paste your SSH private key content here (optional). The key will be stored securely and used for rsync authentication.
+            </p>
+          </div>
+
+          {/* SSH Key Generation Commands */}
+          <div className="space-y-2">
+            <Label>Generate SSH Key</Label>
+            <div className="relative">
+              <pre className="flex items-start justify-between gap-4 rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
+                <code className="flex-1 whitespace-pre">
+{`ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
+cat ./id_ed25519.pub && \\
+ssh-copy-id -i ./id_ed25519.pub user@remote-ip`}
+                </code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    const commands = `ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
+cat ./id_ed25519.pub && \\
+ssh-copy-id -i ./id_ed25519.pub user@remote-ip`
+                    try {
+                      await navigator.clipboard.writeText(commands)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 2000)
+                    } catch (err) {
+                      console.error("Failed to copy commands:", err)
+                    }
+                  }}
+                  className="shrink-0"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-4 w-4 mr-2" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4 mr-2" />
+                      Copy
+                    </>
+                  )}
+                </Button>
+              </pre>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Use these commands to generate an SSH key pair and copy the public key to the remote server. Replace <code className="bg-muted px-1 rounded">user@remote-ip</code> with your actual username and hostname.
             </p>
           </div>
 
