@@ -306,6 +306,7 @@ public class BackupPlanController : ControllerBase
         try
         {
             var backupPlan = await _context.BackupPlans
+                .Include(bp => bp.agent)
                 .FirstOrDefaultAsync(bp => bp.id == id);
 
             if (backupPlan == null)
@@ -313,9 +314,9 @@ public class BackupPlanController : ControllerBase
                 return NotFound(new { message = "Backup plan not found" });
             }
 
-            if (string.IsNullOrWhiteSpace(backupPlan.rsyncHost))
+            if (backupPlan.agent == null)
             {
-                return BadRequest(new { message = "Backup plan does not have rsync host configured" });
+                return BadRequest(new { message = "Backup plan does not have an agent configured" });
             }
 
             var executor = HttpContext.RequestServices.GetRequiredService<BackupPlanExecutor>();
