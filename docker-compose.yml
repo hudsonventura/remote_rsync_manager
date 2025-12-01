@@ -11,10 +11,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=https://+:5001
       - CLIENT_DEV_MODE=true
+    restart: unless-stopped
     volumes:
-      - ./data:/app/data
+      - ./data/:/app/data/
       # Mount the file system you want to backup (adjust path as you need)
       # Example: Mount specific directory instead of entire filesystem: /home/user/files:/host
       - /path/your/files/:/host/
-    restart: unless-stopped
+    
 

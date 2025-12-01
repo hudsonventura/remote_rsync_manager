@@ -80,45 +80,9 @@ function formatFileSize(bytes: number | null): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
-function formatTransferSpeed(bytesPerSecond: number | null): { bytes: string; bits: string } {
-  if (bytesPerSecond === null || bytesPerSecond === undefined) {
-    return { bytes: "N/A", bits: "N/A" }
-  }
-  if (bytesPerSecond === 0) {
-    return { bytes: "0 B/s", bits: "0 b/s" }
-  }
 
-  // Format bytes per second (using base 1024)
-  const kBytes = 1024
-  const byteSizes = ["B/s", "KB/s", "MB/s", "GB/s"]
-  const byteIndex = Math.floor(Math.log(bytesPerSecond) / Math.log(kBytes))
-  const bytesFormatted = `${parseFloat((bytesPerSecond / Math.pow(kBytes, byteIndex)).toFixed(2))} ${byteSizes[byteIndex]}`
 
-  // Format bits per second (using base 1000)
-  const bitsPerSecond = bytesPerSecond * 8
-  const kBits = 1000
-  const bitSizes = ["b/s", "Kb/s", "Mb/s", "Gb/s"]
-  const bitIndex = Math.floor(Math.log(bitsPerSecond) / Math.log(kBits))
-  const bitsFormatted = `${parseFloat((bitsPerSecond / Math.pow(kBits, bitIndex)).toFixed(2))} ${bitSizes[bitIndex]}`
 
-  return { bytes: bytesFormatted, bits: bitsFormatted }
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null || seconds === undefined) return "N/A"
-
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = Math.floor(seconds % 60)
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m ${secs}s`
-  } else if (minutes > 0) {
-    return `${minutes}m ${secs}s`
-  } else {
-    return `${secs}s`
-  }
-}
 
 function formatDateTime(dateTime: string, timezone: string = "UTC"): string {
   return formatDateTimeWithTimezone(dateTime, timezone)
