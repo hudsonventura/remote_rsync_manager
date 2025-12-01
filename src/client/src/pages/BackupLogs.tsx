@@ -64,6 +64,9 @@ interface ExecutionStats {
   transferSpeedBytesPerSecond: number
   speedup: number
   durationSeconds: number
+  // Progress tracking
+  totalFilesToProcess: number | null
+  currentFileIndex: number
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -773,6 +776,33 @@ export function BackupLogs() {
                       )}
                     </div>
                   </div>
+                  
+                  {/* Progress Bar */}
+                  {executionStats.totalFilesToProcess !== null && executionStats.totalFilesToProcess > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <div className="flex justify-between text-sm text-muted-foreground">
+                        <span>Progress</span>
+                        <span>
+                          {executionStats.currentFileIndex} / {executionStats.totalFilesToProcess} files
+                          {executionStats.totalFilesToProcess > 0 && (
+                            <span className="ml-2">
+                              ({Math.round((executionStats.currentFileIndex / executionStats.totalFilesToProcess) * 100)}%)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="w-full bg-secondary rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out"
+                          style={{
+                            width: executionStats.totalFilesToProcess > 0
+                              ? `${Math.min((executionStats.currentFileIndex / executionStats.totalFilesToProcess) * 100, 100)}%`
+                              : '0%'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

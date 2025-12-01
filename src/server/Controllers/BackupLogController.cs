@@ -268,7 +268,9 @@ public class BackupLogController : ControllerBase
                 Status = "Unknown",
                 CurrentFileName = execution.currentFileName,
                 CurrentFilePath = execution.currentFilePath,
-                RsyncCommand = rsyncCommand
+                RsyncCommand = rsyncCommand,
+                TotalFilesToProcess = execution.totalFilesToProcess,
+                CurrentFileIndex = execution.currentFileIndex
             };
 
             // Parse statistics from log entry if available
@@ -681,6 +683,10 @@ public class ExecutionStatsResponse
     public double TransferSpeedBytesPerSecond { get; set; }
     public double Speedup { get; set; }
     public double DurationSeconds { get; set; }
+    
+    // Progress tracking
+    public int? TotalFilesToProcess { get; set; }
+    public int CurrentFileIndex { get; set; }
 }
 
 public class AllLogsEntryResponse

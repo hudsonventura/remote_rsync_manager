@@ -50,6 +50,65 @@ public class BackupPlanExecutor
             await File.WriteAllTextAsync(sshKeyPath, agent.rsyncSshKey);
             File.SetUnixFileMode(sshKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
+            var startTime = DateTime.UtcNow;
+            Guid executionId = Guid.NewGuid();
+            int? totalFilesToProcess = null;
+
+            // If not a simulation, run dry-run first to get the list of files that will be affected
+            if (!isSimulation)
+            {
+                _logger.LogInformation("Running dry-run to analyze files for backup plan {BackupPlanId}", backupPlan.id);
+                
+                // Create backup execution for dry-run phase
+                using (var logScope = _serviceScopeFactory.CreateScope())
+                {
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    var backupExecution = new BackupExecution
+                    {
+                        id = executionId,
+                        backupPlanId = backupPlan.id,
+                        name = $"{backupPlan.name} - Execution",
+                        startDateTime = startTime
+                    };
+                    logContext.BackupExecutions.Add(backupExecution);
+                    
+                    // Log dry-run start
+                    var dryRunStartLog = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-analyze",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting dry-run to analyze directory structure"
+                    };
+                    logContext.LogEntries.Add(dryRunStartLog);
+                    await logContext.SaveChangesAsync();
+                }
+
+                // Run dry-run to count files
+                totalFilesToProcess = await RunDryRunAndCountFiles(backupPlan, agent, sshKeyPath, executionId);
+                
+                // Update BackupExecution with total files
+                if (totalFilesToProcess.HasValue)
+                {
+                    using (var logScope = _serviceScopeFactory.CreateScope())
+                    {
+                        var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                        var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                        if (backupExecution != null)
+                        {
+                            backupExecution.totalFilesToProcess = totalFilesToProcess.Value;
+                            await logContext.SaveChangesAsync();
+                        }
+                    }
+                    _logger.LogInformation("Dry-run completed. Found {FileCount} files to process", totalFilesToProcess.Value);
+                }
+            }
+
             // Build rsync command
             var rsyncArgs = new StringBuilder();
             
@@ -69,56 +128,95 @@ public class BackupPlanExecutor
             rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
 
             var fullCommand = $"rsync {rsyncArgs}";
-            var startTime = DateTime.UtcNow;
 
             _logger.LogInformation("Rsync command: {Command}", fullCommand);
             _logger.LogInformation("Starting rsync execution for backup plan {BackupPlanId} (Simulation: {IsSimulation})", backupPlan.id, isSimulation);
 
-            // Create backup execution and log entries
-            Guid executionId = Guid.NewGuid();
-            using (var logScope = _serviceScopeFactory.CreateScope())
+            // Create backup execution and log entries (if not already created)
+            if (isSimulation)
             {
-                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
-                
-                // Create BackupExecution
-                var backupExecution = new BackupExecution
+                using (var logScope = _serviceScopeFactory.CreateScope())
                 {
-                    id = executionId,
-                    backupPlanId = backupPlan.id,
-                    name = $"{backupPlan.name} - {(isSimulation ? "Simulation" : "Execution")}",
-                    startDateTime = startTime
-                };
-                logContext.BackupExecutions.Add(backupExecution);
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Create BackupExecution
+                    var backupExecution = new BackupExecution
+                    {
+                        id = executionId,
+                        backupPlanId = backupPlan.id,
+                        name = $"{backupPlan.name} - Simulation",
+                        startDateTime = startTime
+                    };
+                    logContext.BackupExecutions.Add(backupExecution);
 
-                // Log rsync start
-                var startLogEntry = new LogEntry
+                    // Log rsync start
+                    var startLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-execution",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting rsync execution (SIMULARTION)"
+                    };
+                    logContext.LogEntries.Add(startLogEntry);
+
+                    // Log rsync command
+                    var commandLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-command",
+                        filePath = fullCommand,
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Rsync command executed"
+                    };
+                    logContext.LogEntries.Add(commandLogEntry);
+
+                    await logContext.SaveChangesAsync();
+                }
+            }
+            else
+            {
+                // Log actual execution start (dry-run already logged)
+                using (var logScope = _serviceScopeFactory.CreateScope())
                 {
-                    id = Guid.NewGuid(),
-                    backupPlanId = backupPlan.id,
-                    executionId = executionId,
-                    datetime = startTime,
-                    fileName = "rsync-start",
-                    filePath = "",
-                    action = LogEntry.Action.System.ToString(),
-                    reason = $"Starting rsync execution (Simulation: {isSimulation})"
-                };
-                logContext.LogEntries.Add(startLogEntry);
-
-                // Log rsync command
-                var commandLogEntry = new LogEntry
-                {
-                    id = Guid.NewGuid(),
-                    backupPlanId = backupPlan.id,
-                    executionId = executionId,
-                    datetime = startTime,
-                    fileName = "rsync-command",
-                    filePath = fullCommand,
-                    action = LogEntry.Action.System.ToString(),
-                    reason = "Rsync command executed"
-                };
-                logContext.LogEntries.Add(commandLogEntry);
-
-                await logContext.SaveChangesAsync();
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Log rsync command for actual execution
+                    var commandLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = DateTime.UtcNow,
+                        fileName = "rsync-command",
+                        filePath = fullCommand,
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Rsync command executed"
+                    };
+                    logContext.LogEntries.Add(commandLogEntry);
+                    
+                    // Log actual execution start
+                    var startLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = DateTime.UtcNow,
+                        fileName = "rsync-execution",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting actual rsync execution"
+                    };
+                    logContext.LogEntries.Add(startLogEntry);
+                    
+                    await logContext.SaveChangesAsync();
+                }
             }
 
             // Execute rsync
@@ -169,7 +267,7 @@ public class BackupPlanExecutor
                             }
                         }
                         
-                        // Update BackupExecution with current file being processed
+                        // Update BackupExecution with current file being processed and progress
                         if (!string.IsNullOrEmpty(logEntry.filePath))
                         {
                             _ = Task.Run(async () =>
@@ -184,6 +282,7 @@ public class BackupPlanExecutor
                                     {
                                         backupExecution.currentFileName = logEntry.fileName;
                                         backupExecution.currentFilePath = logEntry.filePath;
+                                        backupExecution.currentFileIndex++;
                                         await logContext.SaveChangesAsync();
                                     }
                                 }
@@ -367,6 +466,103 @@ public class BackupPlanExecutor
             {
                 _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {SshKeyPath}", sshKeyPath);
             }
+        }
+    }
+
+    private async Task<int> RunDryRunAndCountFiles(BackupPlan backupPlan, Agent agent, string sshKeyPath, Guid executionId)
+    {
+        try
+        {
+            // Build rsync command with --dry-run
+            var rsyncArgs = new StringBuilder();
+            rsyncArgs.Append("--dry-run -avz --delete --itemize-changes --stats ");
+            
+            // Build SSH command for -e option
+            var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
+            rsyncArgs.Append($"-e \"{sshCommand}\" ");
+            
+            var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
+            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "rsync",
+                Arguments = rsyncArgs.ToString(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = processStartInfo };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    outputBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync();
+
+            var output = outputBuilder.ToString();
+            
+            // Parse the output to count files
+            // Look for "Number of files:" line in stats
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                if (trimmedLine.StartsWith("Number of files:"))
+                {
+                    var match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.]+)");
+                    if (match.Success)
+                    {
+                        var count = ParseNumber(match.Groups[1].Value);
+                        _logger.LogInformation("Dry-run found {FileCount} files to process", count);
+                        return count;
+                    }
+                }
+            }
+            
+            // If stats not found, count from itemize-changes output
+            int fileCount = 0;
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                // Count lines that represent file operations (not progress or stats)
+                if ((trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("*deleting")) &&
+                    !trimmedLine.StartsWith("receiving incremental file list") &&
+                    !trimmedLine.Contains("Number of") &&
+                    !trimmedLine.Contains("Total file size") &&
+                    !trimmedLine.Contains("Total transferred file size"))
+                {
+                    fileCount++;
+                }
+            }
+            
+            _logger.LogInformation("Dry-run counted {FileCount} files from output", fileCount);
+            return fileCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error running dry-run: {Error}", ex.Message);
+            return 0;
         }
     }
 
