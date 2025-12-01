@@ -235,8 +235,8 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
         jwtConfig = new JwtConfig
         {
             secretKey = generatedSecretKey,
-            issuer = "RememberApp",
-            audience = "RememberAppUsers",
+            issuer = "Remote Rsync Manager",
+            audience = "RsyncAppUsers",
             created_at = DateTime.UtcNow,
             updated_at = DateTime.UtcNow
         };

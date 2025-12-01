@@ -1,35 +1,30 @@
-# Remember Backup System
+# Remote Rsync Manager
 
-This system centralizes backups from multiple sources. It’s designed to run alongside ZFS or similar technologies, including TrueNAS Scale. Since it doesn’t provide its own versioning mechanism, ZFS or TrueNAS handles versioning automatically.  
+<img src="src/client/public/icon.png" alt="Logo" width="100">
 
-![Logo](src/client/public/icon.png)
+This is a Rsync graphical interface.  
+This system centralizes backups using Rsync from multiple sources (agents). It’s designed to run alongside ZFS or similar technologies, including TrueNAS Scale, because it doesn’t provide its own versioning mechanism, ZFS or TrueNAS handles versioning automatically.  
+
+
 
 ## Features
 
 - Multi-agent backup management with secure pairing
-- Flexible cron-based scheduling with human-readable descriptions
-- Backup simulation to preview changes before execution
+- Cron-based scheduling with human-readable descriptions
+- Exectutions simulated (dry-run) to preview changes before execution
 - Manual backup execution on demand
 - Detailed logging with filtering and sorting capabilities
 - File system browsing for both remote agents and local server
 - Active/inactive backup plan management
-- Intelligent file comparison (by name and size) to minimize unnecessary transfers
 
-## API Testing
 
-The `HTTPTests` directory contains API test collections for use with [Bruno](https://www.usebruno.com/) - a modern, open-source API client.
 
-To use the test collections:
-1. Install Bruno from [https://www.usebruno.com/](https://www.usebruno.com/)
-2. Open Bruno and import the `HTTPTests` folder
-3. Configure the environment variables in `HTTPTests/environments/dev.bru`
-4. Run tests against the Server and Agent endpoints
 
 ## Getting Started
 
 ### Prerequisites
 
-- It is advisable to use it with TrueNAS, ZFS, or another system that supports version control. 
+- It is advisable to use it with TrueNAS, ZFS, or another system that supports **version control**. 
 - Docker and Docker Compose installed on your system
 - A web browser (Chrome, Firefox, Edge, etc.)
 
@@ -39,8 +34,8 @@ To use the test collections:
 
 You can clone the repository:
 ```bash
-git clone https://github.com/hudsonventura/remeber.git &&
-cd remember &&
+git clone https://github.com/hudsonventura/remote_rsync_manager.git &&
+cd remote_rsync_manager &&
 sudo docker compose up -d
 ```
 
@@ -57,12 +52,10 @@ This will:
 - Initialize the database
 
 
-> [!CAUTION] 
-> Note you have to infom the volumes, paths to the agent access you PC. Put as much as you need. Note the `:ro` at the provides ready-only access.  
 
 ```
  volumes:
-      - /path/your/files:/host:ro  # Read-only mount of host filesystem
+      - /path/your/files:/host
 ```
 
 
@@ -88,65 +81,22 @@ This step is required because the backend uses a self-signed certificate for HTT
 #### Step 5: Login
 
 1. Navigate to **https://localhost:5001/login** in your browser
-2. The default user and pass is `user@example.com`and `password123`. Change ir soon as possible.  
-
-
-
-#### Step 6: Install Agent
-If you’ve already installed your agents, you can skip to the next step.  
-
-##### Step 6.1: Install on Linux as Docker
-On another machine from which you want to send files to the server, in other words, the machi you want to be backuped, you can clone the repository:
-```bash
-git clone https://github.com/hudsonventura/remeber.git &&
-cd remember/src/agents/linux &&
-sudo docker compose up -d
-```
-
-or copy the content of `src/agents/linux/docker-compose.yml`, from [here](https://github.com/hudsonventura/remeber/blob/main/src/agents/linux/docker-compose.yml), on your computer and run:
-```bash
-sudo docker-compose up -d
-```
-
-> [!CAUTION] 
-> Note you have to infom the volumes, paths to the agent access you PC. Put as much as you need. Note the `:ro` at the provides ready-only access.  
-
-```
- volumes:
-      - /path/your/files:/host:ro  # Read-only mount of host filesystem
-```
+2. The default user and pass is `admin`and `admin`. Change it soon as possible. They will be store at `./data/server.db`.  
 
 
 
 
-##### Step 6.2: Install on Linux as Service using systemd
-Soon
-
-
-
-
-##### Step 6.3: Install on Windows
-Soon
-
-
-
-
-##### Step 6.4: Agent Code
-The agent generates an authorization code required to connect to it. This adds an extra layer of security and prevents unauthorized users from connecting to the agent.  
-
-> [!CAUTION] 
-> When the agent is running, it will generate a code. Make sure to write it down. This code will be valid for 10 minutes. If that time passes, turn the agent off and back on so it can generate a new code.  
-
-![Agent Code](assets/agent_code.png)
-
-#### Step 7: Add an Agent
+#### Step 6: Add an Agent
 
 1. From the main dashboard, click on **"Agents"** in the sidebar
 2. Click the **"Add Agent"** button (top right)
 3. Fill in the agent details:
    - **Name**: Enter a friendly name for the agent (e.g., "Production Server", "Backup Server 1")
-   - **Hostname**: Enter the agent's address (e.g., `https://agent.example.com:5002` or `localhost:5002`)
-   - **Pairing Code**: Enter the 6-digit pairing code displayed in the agent's console
+   - **Hostname**: Enter the agent's ip or host (e.g., `192.168.1.2` or `your_machine`)
+   - **SSH User**: username to use on SSH/Rsync connection  
+   - **SSH Port**: port to use on SSH/Rsync connection. Default 22
+   - **SSH Private Key**: key to use on SSH/Rsync connection  
+   
 
 ![Agent Code](assets/agent_add.png)
 
@@ -156,7 +106,7 @@ The agent generates an authorization code required to connect to it. This adds a
 
 
 
-#### Step 3: Add a Backup Plan
+#### Step 7: Add a Backup Plan
 
 1. Navigate to the agent's backup plans page:
    - Click on **"Agents"** in the sidebar
@@ -187,7 +137,7 @@ The agent generates an authorization code required to connect to it. This adds a
 
 
 
-#### Step 4: Simulate a Backup
+#### Step 8: Simulate a Backup
 
 Before running an actual backup, it's recommended to simulate it first to see what changes will be made:
 
@@ -212,7 +162,7 @@ Before running an actual backup, it's recommended to simulate it first to see wh
 4. Review the simulation results to ensure everything looks correct
 5. Click **"Close"** when done reviewing
 
-#### Step 5: Execute a Backup
+#### Step 9: Execute a Backup
 
 Once you're satisfied with the simulation results, you can execute the backup:
 
@@ -246,7 +196,15 @@ The application uses SQLite databases on `data` dir on server:
 And on agents:
 - `agent.db` - Store JWT of the server authorized
 
+## API Testing
 
+The `HTTPTests` directory contains API test collections for use with [Bruno](https://www.usebruno.com/) - a modern, open-source API client.
+
+To use the test collections:
+1. Install Bruno from [https://www.usebruno.com/](https://www.usebruno.com/)
+2. Open Bruno and import the `HTTPTests` folder
+3. Configure the environment variables in `HTTPTests/environments/dev.bru`
+4. Run tests against the Server and Agent endpoints
 
 ## License
 

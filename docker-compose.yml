@@ -13,8 +13,8 @@ services:
       - CLIENT_DEV_MODE=true
     volumes:
       - ./data:/app/data
-      # Mount the file system you want to backup (adjust path as needed)
-      # Example: Mount specific directory instead of entire filesystem
-      - /:/host
+      # Mount the file system you want to backup (adjust path as you need)
+      # Example: Mount specific directory instead of entire filesystem: /home/user/files:/host
+      - /path/your/files/:/host/
     restart: unless-stopped
 
