@@ -111,6 +111,7 @@ public class FileSystemController : ControllerBase
                             {
                                 Name = dirInfo.Name,
                                 PathName = dirInfo.FullName,
+                                Path = directoryPath, // Set the current directory path
                                 Type = "directory",
                                 Size = null,
                                 LastModified = dirInfo.LastWriteTimeUtc,
@@ -141,7 +142,7 @@ public class FileSystemController : ControllerBase
                         {
                             Name = fileInfo.Name,
                             PathName = fileInfo.FullName,
-                            Path = fileInfo.DirectoryName,
+                            Path = fileInfo.DirectoryName ?? directoryPath, // Use DirectoryName or fallback to directoryPath
                             Type = "file",
                             Size = fileInfo.Length,
                             LastModified = fileInfo.LastWriteTimeUtc,

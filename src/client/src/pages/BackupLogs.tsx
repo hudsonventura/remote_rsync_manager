@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2, Loader2 } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, X, ArrowUpDown, ArrowUp, ArrowDown, Clock, CheckCircle2, Loader2, Copy, Check } from "lucide-react"
 import { apiGet } from "@/lib/api"
 import { formatDateTimeWithTimezone } from "@/components/TimezoneSelector"
 
@@ -41,15 +41,32 @@ interface ExecutionStats {
   executionId: string
   startDateTime: string
   endDateTime: string | null
-  totalSize: number
-  fileCount: number
-  ignoredCount: number
-  deletedCount: number
-  durationSeconds: number | null
-  averageSpeedBytesPerSecond: number | null
   status: string
   currentFileName: string | null
   currentFilePath: string | null
+  rsyncCommand: string
+  // Rsync statistics
+  totalFiles: number
+  regularFiles: number
+  directories: number
+  createdFiles: number
+  deletedFiles: number
+  transferredFiles: number
+  totalFileSize: number
+  totalTransferredSize: number
+  literalData: number
+  matchedData: number
+  fileListSize: number
+  fileListGenerationTime: number
+  fileListTransferTime: number
+  totalBytesSent: number
+  totalBytesReceived: number
+  transferSpeedBytesPerSecond: number
+  speedup: number
+  durationSeconds: number
+  // Progress tracking
+  totalFilesToProcess: number | null
+  currentFileIndex: number
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -188,6 +205,9 @@ export function BackupLogs() {
 
   // Timezone from navbar selector
   const [timezone, setTimezone] = useState<string>("UTC")
+  
+  // Copy button state
+  const [copied, setCopied] = useState(false)
 
   // Listen for timezone changes from navbar
   useEffect(() => {
@@ -448,6 +468,18 @@ export function BackupLogs() {
     navigate(`/backup-plans/${planId}/logs`)
   }
 
+  const handleCopyCommand = async () => {
+    if (executionStats?.rsyncCommand) {
+      try {
+        await navigator.clipboard.writeText(executionStats.rsyncCommand)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch (err) {
+        console.error("Failed to copy command:", err)
+      }
+    }
+  }
+
   if (isLoading && !executionId) {
     return (
       <div className="space-y-6">
@@ -620,47 +652,114 @@ export function BackupLogs() {
                   )
                 })()}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Total Data Transferred</p>
-                  <p className="text-2xl font-bold">{formatFileSize(executionStats.totalSize)}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Transfered</p>
-                  <p className="text-2xl font-bold">{executionStats.fileCount.toLocaleString()}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Ignored</p>
-                  <p className="text-2xl font-bold">{executionStats.ignoredCount?.toLocaleString() ?? 0}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Files Deleted</p>
-                  <p className="text-2xl font-bold">{executionStats.deletedCount?.toLocaleString() ?? 0}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Duration</p>
-                  <p className="text-2xl font-bold">
-                    {executionStats.endDateTime ? formatDuration(executionStats.durationSeconds) : "Running..."}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Average Transfer Speed</p>
-                  {(() => {
-                    const speed = formatTransferSpeed(executionStats.averageSpeedBytesPerSecond)
-                    return (
-                      <div className="space-y-0.5">
-                        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                          {speed.bytes}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          ({speed.bits})
-                        </p>
-                      </div>
-                    )
-                  })()}
+              
+              {/* File Count Statistics Card */}
+              <div className="rounded-lg border bg-muted/50 p-4 mb-4">
+                <h3 className="text-sm font-semibold mb-4 text-muted-foreground">File Statistics</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Number of files</p>
+                    <p className="text-xl font-bold">{executionStats.totalFiles.toLocaleString()} <small className="text-xs leading-none font-medium text-muted-foreground">(reg: {executionStats.regularFiles.toLocaleString()}, dir: {executionStats.directories.toLocaleString()})</small></p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Number of created files</p>
+                    <p className="text-xl font-bold">{executionStats.createdFiles.toLocaleString()}</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Number of deleted files</p>
+                    <p className="text-xl font-bold">{executionStats.deletedFiles.toLocaleString()}</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Number of regular files transferred</p>
+                    <p className="text-xl font-bold">{executionStats.transferredFiles.toLocaleString()}</p>
+                  </div>
                 </div>
               </div>
+
+              {/* Other Statistics */}
+              <div className="rounded-lg border bg-muted/50 p-4 mb-4">
+                <h3 className="text-sm font-semibold mb-4 text-muted-foreground">File Statistics</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                 <div className="space-y-1">
+                   <p className="text-xs text-muted-foreground">Total file size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalFileSize)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-xs text-muted-foreground">Total transferred file size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalTransferredSize)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-xs text-muted-foreground">File list size</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.fileListSize)}</p>
+                 </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">File list generation time</p>
+                  <p className="text-2xl font-bold">{executionStats.fileListGenerationTime.toFixed(3)} s</p>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">File list transfer time</p>
+                  <p className="text-2xl font-bold">{executionStats.fileListTransferTime.toFixed(3)} s</p>
+                </div>
+
+                 <div className="space-y-1">
+                   <p className="text-xs text-muted-foreground">Total bytes sent</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalBytesSent)}</p>
+                 </div>
+
+                 <div className="space-y-1">
+                   <p className="text-xs text-muted-foreground">Total bytes received</p>
+                   <p className="text-2xl font-bold">{formatFileSize(executionStats.totalBytesReceived)}</p>
+                 </div>
+
+                </div>
+              </div>
+
+
               
+              {/* Rsync Command */}
+              {executionStats.rsyncCommand && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">Rsync Command</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopyCommand}
+                        className="h-8"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-4 w-4 mr-2" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <div className="bg-muted rounded-md p-3">
+                      <code className="text-sm break-all font-mono">
+                        {executionStats.rsyncCommand}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+
+
               {/* Current File Being Processed */}
               {executionStats.currentFileName && executionStats.status !== "Finished" && (
                 <div className="mt-4 pt-4 border-t">
@@ -677,6 +776,33 @@ export function BackupLogs() {
                       )}
                     </div>
                   </div>
+                  
+                  {/* Progress Bar */}
+                  {executionStats.totalFilesToProcess !== null && executionStats.totalFilesToProcess > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <div className="flex justify-between text-sm text-muted-foreground">
+                        <span>Progress</span>
+                        <span>
+                          {executionStats.currentFileIndex} / {executionStats.totalFilesToProcess} files
+                          {executionStats.totalFilesToProcess > 0 && (
+                            <span className="ml-2">
+                              ({Math.round((executionStats.currentFileIndex / executionStats.totalFilesToProcess) * 100)}%)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="w-full bg-secondary rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out"
+                          style={{
+                            width: executionStats.totalFilesToProcess > 0
+                              ? `${Math.min((executionStats.currentFileIndex / executionStats.totalFilesToProcess) * 100, 100)}%`
+                              : '0%'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

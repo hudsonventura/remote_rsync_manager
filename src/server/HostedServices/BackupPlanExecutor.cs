@@ -3,6 +3,10 @@ using server.Data;
 using server.Models;
 using server.Services;
 using System.Security.Cryptography;
+using System.Diagnostics;
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 
 namespace server.HostedServices;
 
@@ -22,1208 +26,940 @@ public class BackupPlanExecutor
         _environment = environment;
     }
 
-    public async Task ExecuteBackupPlanAsync(BackupPlan backupPlan, Agent agent, bool isAutomatic = true)
+    public async Task<ExecutionResult> ExecuteBackupPlanAsync(BackupPlan backupPlan, bool isAutomatic = true, bool isSimulation = false)
     {
-        Guid executionId = Guid.Empty;
+        Agent? agent = backupPlan.agent;
+
+        if (agent == null)
+        {
+            _logger.LogError("Backup plan {BackupPlanId} does not have an agent configured", backupPlan.id);
+            throw new InvalidOperationException("Backup plan does not have an agent configured");
+        }
+
+        if (string.IsNullOrWhiteSpace(agent.rsyncSshKey))
+        {
+            _logger.LogError("Agent {AgentId} does not have an SSH key configured", agent.id);
+            throw new InvalidOperationException("Agent does not have an SSH key configured");
+        }
+        var sshKeyPath = Path.Combine(Path.GetTempPath(), $"ssh_key_{Guid.NewGuid()}");
+        var result = new ExecutionResult();
+
         try
         {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
+            // Write SSH key to temporary file
+            await File.WriteAllTextAsync(sshKeyPath, agent.rsyncSshKey);
+            File.SetUnixFileMode(sshKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
-            _logger.LogInformation("Executing backup plan {BackupPlanId} for agent {AgentHostname}", backupPlan.id, agent.hostname);
+            var startTime = DateTime.UtcNow;
+            Guid executionId = Guid.NewGuid();
+            int? totalFilesToProcess = null;
 
-            // Get log context for logging operations
-            var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
-
-            // Create backup execution record
-            var startDateTime = DateTime.UtcNow;
-            var executionType = isAutomatic ? "Automatic" : "Manual";
-            var executionName = $"{startDateTime:yyyy/MM/dd HH:mm} - {executionType} - {backupPlan.name}";
-            var execution = new BackupExecution
+            // If not a simulation, run dry-run first to get the list of files that will be affected
+            if (!isSimulation)
             {
-                id = Guid.NewGuid(),
-                backupPlanId = backupPlan.id,
-                name = executionName,
-                startDateTime = startDateTime
-            };
-            executionId = execution.id;
-
-            logContext.BackupExecutions.Add(execution);
-            await logContext.SaveChangesAsync();
-
-            _logger.LogInformation("Created backup execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
-
-            // Reload agent from database to ensure we have the latest token
-            var agentFromDb = await dbContext.Agents.FindAsync(agent.id);
-            if (agentFromDb == null)
-            {
-                _logger.LogError("Agent {AgentId} not found in database", agent.id);
-                throw new InvalidOperationException($"Agent {agent.id} not found");
-            }
-
-            // Check if agent has a token
-            if (string.IsNullOrEmpty(agentFromDb.token))
-            {
-                _logger.LogError("Agent {AgentHostname} does not have a token. Cannot execute backup plan {BackupPlanId}",
-                    agentFromDb.hostname, backupPlan.id);
-                throw new InvalidOperationException($"Agent {agentFromDb.hostname} is not authenticated. Please pair the agent first.");
-            }
-
-            // Log: Source analysis started
-            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Analysis Started", "Started analyzing source file structure");
-
-            // Call the /Look endpoint to get file system items from source (remote agent)
-            var sourceFileSystemItems = await CallLookEndpointAsync(agentFromDb, backupPlan.source);
-
-            _logger.LogInformation("Retrieved {Count} file system items from agent {AgentHostname} for path {Source}",
-                sourceFileSystemItems.Count, agentFromDb.hostname, backupPlan.source);
-
-            // Get file system items from local destination
-            var destinationFileSystemItems = GetLocalFileSystemItems(backupPlan.destination);
-
-            _logger.LogInformation("Retrieved {Count} file system items from local destination {Destination}",
-                destinationFileSystemItems.Count, backupPlan.destination);
-
-            // Compare source and destination to determine what to copy and delete
-            var comparisonResult = CompareFileSystemItems(
-                sourceFileSystemItems,
-                destinationFileSystemItems,
-                backupPlan.source,
-                backupPlan.destination);
-
-            _logger.LogInformation(
-                "Comparison complete: {CopyCount} items to copy, {DeleteCount} items to delete",
-                comparisonResult.NewItems.Count,
-                comparisonResult.DeletedItems.Count);
-
-            // Delete files from destination that don't exist in source
-            await DeleteFilesFromDestination(comparisonResult.DeletedItems, backupPlan.destination, backupPlan.id, executionId, logContext);
-
-            // Log: Copies started
-            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Copies Started", "Started copying files from source to destination");
-
-            // Copy files from source (agent) to destination
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.NewItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, executionId, logContext, "Does not exist on destination"))
-            {
-                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
-            }
-
-            await foreach (var copiedFile in CopyFilesFromSource(comparisonResult.EditedItems, agentFromDb, backupPlan.source, backupPlan.destination, backupPlan.id, executionId, logContext, "Changed on source"))
-            {
-                _logger.LogInformation("Copied file: {SourcePath} -> {DestinationPath}", copiedFile.SourcePath, copiedFile.DestinationPath);
-            }
-
-            // Log: Copies finished
-            await LogMilestoneEvent(logContext, backupPlan.id, executionId, "Copies Finished", "Finished copying files from source to destination");
-
-            // Log files that were ignored (exist in both with same size)
-            await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
-
-            // Update execution end time and clear current file
-            execution.endDateTime = DateTime.UtcNow;
-            execution.currentFileName = null;
-            execution.currentFilePath = null;
-            await logContext.SaveChangesAsync();
-
-            _logger.LogInformation("Backup plan {BackupPlanId} execution completed successfully", backupPlan.id);
-
-            // Create notification
-            try
-            {
-                var notificationService = scope.ServiceProvider.GetService<INotificationService>();
-                if (notificationService != null)
+                _logger.LogInformation("Running dry-run to analyze files for backup plan {BackupPlanId}", backupPlan.id);
+                
+                // Create backup execution for dry-run phase
+                using (var logScope = _serviceScopeFactory.CreateScope())
                 {
-                    await notificationService.CreateBackupCompletedNotificationAsync(
-                        backupPlan.id,
-                        executionId,
-                        backupPlan.name,
-                        true);
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    var backupExecution = new BackupExecution
+                    {
+                        id = executionId,
+                        backupPlanId = backupPlan.id,
+                        name = $"{backupPlan.name} - Execution",
+                        startDateTime = startTime
+                    };
+                    logContext.BackupExecutions.Add(backupExecution);
+                    
+                    // Log dry-run start
+                    var dryRunStartLog = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-analyze",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting dry-run to analyze directory structure"
+                    };
+                    logContext.LogEntries.Add(dryRunStartLog);
+                    await logContext.SaveChangesAsync();
                 }
-            }
-            catch (Exception notifEx)
-            {
-                _logger.LogWarning(notifEx, "Failed to create notification for backup plan {BackupPlanId}", backupPlan.id);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error executing backup plan {BackupPlanId}", backupPlan.id);
 
-            // Update execution end time even on error
-            if (executionId != Guid.Empty)
-            {
-                try
+                // Run dry-run to count files
+                totalFilesToProcess = await RunDryRunAndCountFiles(backupPlan, agent, sshKeyPath, executionId);
+                
+                // Update BackupExecution with total files
+                if (totalFilesToProcess.HasValue)
                 {
-                    using var scope = _serviceScopeFactory.CreateScope();
-                    var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
-                    var execution = await logContext.BackupExecutions.FindAsync(executionId);
-                    if (execution != null)
+                    using (var logScope = _serviceScopeFactory.CreateScope())
                     {
-                        execution.endDateTime = DateTime.UtcNow;
-                        await logContext.SaveChangesAsync();
-                    }
-
-                    // Create failure notification
-                    try
-                    {
-                        var notificationService = scope.ServiceProvider.GetService<INotificationService>();
-                        if (notificationService != null)
+                        var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                        var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                        if (backupExecution != null)
                         {
-                            await notificationService.CreateBackupCompletedNotificationAsync(
-                                backupPlan.id,
-                                executionId,
-                                backupPlan.name,
-                                false,
-                                ex.Message);
+                            backupExecution.totalFilesToProcess = totalFilesToProcess.Value;
+                            await logContext.SaveChangesAsync();
                         }
                     }
-                    catch (Exception notifEx)
+                    _logger.LogInformation("Dry-run completed. Found {FileCount} files to process", totalFilesToProcess.Value);
+                }
+            }
+
+            // Build rsync command
+            var rsyncArgs = new StringBuilder();
+            
+            if (isSimulation)
+            {
+                rsyncArgs.Append("--dry-run ");
+            }
+            
+            rsyncArgs.Append("-avz --progress --delete --itemize-changes --stats ");
+            
+            // Build SSH command for -e option
+            var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
+            rsyncArgs.Append($"-e \"{sshCommand}\" ");
+            
+            var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
+            
+            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
+
+            var fullCommand = $"rsync {rsyncArgs}";
+
+            _logger.LogInformation("Rsync command: {Command}", fullCommand);
+            _logger.LogInformation("Starting rsync execution for backup plan {BackupPlanId} (Simulation: {IsSimulation})", backupPlan.id, isSimulation);
+
+            // Create backup execution and log entries (if not already created)
+            if (isSimulation)
+            {
+                using (var logScope = _serviceScopeFactory.CreateScope())
+                {
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Create BackupExecution
+                    var backupExecution = new BackupExecution
                     {
-                        _logger.LogWarning(notifEx, "Failed to create failure notification for backup plan {BackupPlanId}", backupPlan.id);
-                    }
+                        id = executionId,
+                        backupPlanId = backupPlan.id,
+                        name = $"{backupPlan.name} - Simulation",
+                        startDateTime = startTime
+                    };
+                    logContext.BackupExecutions.Add(backupExecution);
+
+                    // Log rsync start
+                    var startLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-execution",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting rsync execution (SIMULARTION)"
+                    };
+                    logContext.LogEntries.Add(startLogEntry);
+
+                    // Log rsync command
+                    var commandLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = startTime,
+                        fileName = "rsync-command",
+                        filePath = fullCommand,
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Rsync command executed"
+                    };
+                    logContext.LogEntries.Add(commandLogEntry);
+
+                    await logContext.SaveChangesAsync();
                 }
-                catch (Exception updateEx)
-                {
-                    _logger.LogWarning(updateEx, "Failed to update execution end time for {ExecutionId}", executionId);
-                }
-            }
-
-            throw;
-        }
-    }
-
-    private async Task<List<FileSystemItem>> CallLookEndpointAsync(Agent agent, string sourcePath)
-    {
-        // Determine base URL - try HTTPS first, then HTTP
-        string baseUrl = string.Empty;
-        var hostname = agent.hostname;
-
-        if (hostname.StartsWith("http://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            string[] protocolsToTry = new[] { "https://", "http://" };
-            var lastErrorMessage = string.Empty;
-            foreach (var protocol in protocolsToTry)
-            {
-                var testUrl = $"{protocol}{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}";
-                var result = await TryCallLookEndpointAsync(testUrl, agent.token!);
-                if (result.Success && result.Items != null)
-                {
-                    baseUrl = protocol + hostname;
-                    break;
-                }
-                lastErrorMessage = result.ErrorMessage;
-            }
-            if (string.IsNullOrEmpty(baseUrl))
-            {
-                throw new HttpRequestException($"Failed 3 to connect to agent at {agent.hostname}, trying to get https://{hostname}/Look?dir={Uri.EscapeDataString(sourcePath)}. Error: {lastErrorMessage}");
-            }
-        }
-
-        // Recursively get all files and directories by calling /Look for each directory level
-        var allItems = new List<FileSystemItem>();
-        await GetDirectoryRecursivelyAsync(baseUrl, agent.token!, sourcePath, allItems);
-
-        return allItems;
-    }
-
-    private async Task GetDirectoryRecursivelyAsync(string baseUrl, string agentToken, string directoryPath, List<FileSystemItem> allItems)
-    {
-        var lookUrl = $"{baseUrl}/Look?dir={Uri.EscapeDataString(directoryPath)}";
-        var response = await TryCallLookEndpointAsync(lookUrl, agentToken);
-
-        if (!response.Success)
-        {
-            _logger.LogWarning("Failed to call /Look endpoint for {Path}: {Error}", directoryPath, response.ErrorMessage);
-            return;
-        }
-
-        if (response.Items == null || response.Items.Count == 0)
-        {
-            return;
-        }
-
-        // Process items from current directory
-        var directoriesToProcess = new List<string>();
-
-        foreach (var item in response.Items)
-        {
-            // Add all items (files and directories) to the result
-            allItems.Add(item);
-
-            // If it's a directory, add it to the list to process recursively
-            if (item.Type == "directory")
-            {
-                directoriesToProcess.Add(item.PathName);
-            }
-        }
-
-        // Recursively process subdirectories
-        foreach (var subDir in directoriesToProcess)
-        {
-            await GetDirectoryRecursivelyAsync(baseUrl, agentToken, subDir, allItems);
-        }
-    }
-
-    private async Task<(bool Success, List<FileSystemItem>? Items, string ErrorMessage)> TryCallLookEndpointAsync(string url, string agentToken)
-    {
-        // Configure HttpClient to accept self-signed certificates and invalid certificates
-        var httpClientHandler = new HttpClientHandler();
-
-
-        // Accept self-signed certificates and invalid certificates
-        httpClientHandler.ServerCertificateCustomValidationCallback =
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-            {
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-
-        httpClient.Timeout = TimeSpan.FromSeconds(30); // Timeout for individual directory listing (non-recursive, should be fast)
-
-        // Add the authentication token header
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
-        try
-        {
-            _logger.LogInformation("Calling /Look endpoint at {Url}", url);
-
-            var response = await httpClient.GetAsync(url);
-
-            if (response.IsSuccessStatusCode)
-            {
-                var items = await response.Content.ReadFromJsonAsync<List<FileSystemItem>>();
-                _logger.LogInformation("Successfully retrieved {Count} items from /Look endpoint", items?.Count ?? 0);
-                return (true, items ?? new List<FileSystemItem>(), string.Empty);
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, null, "Authentication failed: Invalid or expired token");
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to call /Look endpoint at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, null, $"HTTP {response.StatusCode}: {errorContent}");
-            }
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Timeout calling /Look endpoint at {Url}", url);
-            return (false, null, "Request timeout");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling /Look endpoint at {Url}", url);
-            return (false, null, ex.Message);
-        }
-    }
-
-    private List<FileSystemItem> GetLocalFileSystemItems(string destinationPath)
-    {
-        var items = new List<FileSystemItem>();
-
-        try
-        {
-            // Security check: prevent directory traversal attacks
-            if (destinationPath.Contains(".."))
-            {
-                _logger.LogWarning("Potentially unsafe destination path: {Path}", destinationPath);
-                throw new ArgumentException("Invalid destination path: directory traversal (..) is not allowed");
-            }
-
-            // Check if directory exists, create if it doesn't
-            if (!Directory.Exists(destinationPath))
-            {
-                _logger.LogInformation("Destination directory does not exist, creating: {Path}", destinationPath);
-                Directory.CreateDirectory(destinationPath);
-            }
-
-            // Get directory info
-            var directoryInfo = new DirectoryInfo(destinationPath);
-
-            // Recursively get all directories and files
-            GetAllDirectoriesAndFiles(directoryInfo, items);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _logger.LogWarning(ex, "Access denied to destination directory: {Path}", destinationPath);
-            throw new UnauthorizedAccessException($"Access denied to destination directory: {destinationPath}", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error reading destination directory: {Path}", destinationPath);
-            throw;
-        }
-
-        // Sort: directories first, then files, both alphabetically
-        return items
-            .OrderBy(i => i.Type == "file") // Directories first (false < true)
-            .ThenBy(i => i.Name)
-            .ToList();
-    }
-
-    private void GetAllDirectoriesAndFiles(DirectoryInfo directory, List<FileSystemItem> items)
-    {
-        // Get immediate subdirectories
-        DirectoryInfo[] subdirectories;
-        try
-        {
-            subdirectories = directory.GetDirectories();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            _logger.LogWarning("Access denied to directory: {Path}", directory.FullName);
-            return;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting subdirectories from: {Path}", directory.FullName);
-            return;
-        }
-
-        foreach (var dirInfo in subdirectories)
-        {
-            try
-            {
-                items.Add(new FileSystemItem
+                // Log actual execution start (dry-run already logged)
+                using (var logScope = _serviceScopeFactory.CreateScope())
                 {
-                    Name = dirInfo.Name,
-                    PathName = dirInfo.FullName,
-                    Type = "directory",
-                    Size = null,
-                    LastModified = dirInfo.LastWriteTimeUtc,
-                    Permissions = GetUnixPermissions(dirInfo.FullName)
-                });
-
-                // Recursively process subdirectories
-                GetAllDirectoriesAndFiles(dirInfo, items);
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Log rsync command for actual execution
+                    var commandLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = DateTime.UtcNow,
+                        fileName = "rsync-command",
+                        filePath = fullCommand,
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Rsync command executed"
+                    };
+                    logContext.LogEntries.Add(commandLogEntry);
+                    
+                    // Log actual execution start
+                    var startLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = DateTime.UtcNow,
+                        fileName = "rsync-execution",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = "Starting actual rsync execution"
+                    };
+                    logContext.LogEntries.Add(startLogEntry);
+                    
+                    await logContext.SaveChangesAsync();
+                }
             }
-            catch (Exception ex)
-            {
-                // Log but continue processing other directories
-                _logger.LogWarning(ex, "Error processing subdirectory: {Path}", dirInfo.FullName);
-            }
-        }
 
-        // Get files in current directory
-        FileInfo[] files;
-        try
-        {
-            files = directory.GetFiles();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Can't read files, but we already processed subdirectories, so just return
-            return;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting files from: {Path}", directory.FullName);
-            return;
-        }
-
-        foreach (var fileInfo in files)
-        {
-            try
+            // Execute rsync
+            var processStartInfo = new ProcessStartInfo
             {
-                items.Add(new FileSystemItem
-                {
-                    Name = fileInfo.Name,
-                    Path = fileInfo.DirectoryName,
-                    PathName = fileInfo.FullName,
-                    Type = "file",
-                    Size = fileInfo.Length,
-                    LastModified = fileInfo.LastWriteTimeUtc,
-                    Permissions = GetUnixPermissions(fileInfo.FullName),
-                    Md5 = CalculateFileMd5(fileInfo.FullName)
-                });
-            }
-            catch (Exception ex)
-            {
-                // Log but continue processing other files
-                _logger.LogWarning(ex, "Error processing file: {Path}", fileInfo.FullName);
-            }
-        }
-    }
-
-    //TODO: Unify the method to calculate the MD5
-    private string? CalculateFileMd5(string filePath)
-    {
-        try
-        {
-            using var md5 = MD5.Create();
-            using var stream = System.IO.File.OpenRead(filePath);
-            var hash = md5.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error calculating MD5 for file: {Path}", filePath);
-            return null;
-        }
-    }
-
-    private string? GetUnixPermissions(string path)
-    {
-        try
-        {
-            // On Unix-like systems, get file permissions using stat command
-            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-            {
-                return GetUnixPermissionsViaStat(path);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting Unix permissions for: {Path}", path);
-        }
-        return null;
-    }
-
-    private string? GetUnixPermissionsViaStat(string path)
-    {
-        try
-        {
-            var processStartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "stat",
-                Arguments = $"-c %a \"{path}\"",
+                FileName = "rsync",
+                Arguments = rsyncArgs.ToString(),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
 
-            using var process = System.Diagnostics.Process.Start(processStartInfo);
-            if (process == null)
-                return null;
+            using var process = new Process { StartInfo = processStartInfo };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+            var logEntriesBatch = new List<LogEntry>();
+            var lastSaveTime = DateTime.UtcNow;
+            var batchLock = new object();
+            const int BatchSaveIntervalSeconds = 2; // Save logs every 2 seconds
+            const int MaxBatchSize = 50; // Save when batch reaches 50 entries
 
-            process.WaitForExit(1000); // 1 second timeout
-
-            if (process.ExitCode == 0)
+            process.OutputDataReceived += (sender, e) =>
             {
-                var output = process.StandardOutput.ReadToEnd().Trim();
-                // stat returns 4 digits sometimes (e.g., "0755"), we want 3 digits
-                if (output.Length >= 3)
+                if (!string.IsNullOrEmpty(e.Data))
                 {
-                    return output.Substring(output.Length - 3);
+                    var line = e.Data;
+                    outputBuilder.AppendLine(line);
+                    _logger.LogDebug("Rsync output: {Output}", line);
+
+                    // Parse and log file operations in real-time
+                    var logEntry = ParseRsyncLine(line, backupPlan.id, executionId, DateTime.UtcNow);
+                    if (logEntry != null)
+                    {
+                        List<LogEntry>? batchToSave = null;
+                        
+                        lock (batchLock)
+                        {
+                            logEntriesBatch.Add(logEntry);
+                            
+                            var now = DateTime.UtcNow;
+                            if (logEntriesBatch.Count >= MaxBatchSize || 
+                                (now - lastSaveTime).TotalSeconds >= BatchSaveIntervalSeconds)
+                            {
+                                batchToSave = new List<LogEntry>(logEntriesBatch);
+                                logEntriesBatch.Clear();
+                                lastSaveTime = now;
+                            }
+                        }
+                        
+                        // Update BackupExecution with current file being processed and progress
+                        if (!string.IsNullOrEmpty(logEntry.filePath))
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                    
+                                    var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                                    if (backupExecution != null)
+                                    {
+                                        backupExecution.currentFileName = logEntry.fileName;
+                                        backupExecution.currentFilePath = logEntry.filePath;
+                                        backupExecution.currentFileIndex++;
+                                        await logContext.SaveChangesAsync();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to update BackupExecution current file");
+                                }
+                            });
+                        }
+
+                        // Save batch if it's time or batch is full
+                        if (batchToSave != null && batchToSave.Count > 0)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                    logContext.LogEntries.AddRange(batchToSave);
+                                    await logContext.SaveChangesAsync();
+                                    _logger.LogDebug("Saved {Count} log entries to database", batchToSave.Count);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to save log entries batch: {Error}", ex.Message);
+                                }
+                            });
+                        }
+                    }
                 }
-                return output;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting Unix permissions via stat for: {Path}", path);
-        }
-        return null;
-    }
-
-    private class FileSystemComparisonResult
-    {
-        public List<FileSystemItem> NewItems { get; set; } = new();
-        public List<FileSystemItem> EditedItems { get; set; } = new();
-        public List<FileSystemItem> DeletedItems { get; set; } = new();
-        public List<FileSystemItem> TransferredItems { get; set; } = new();
-
-    }
-
-    private FileSystemComparisonResult CompareFileSystemItems(
-        List<FileSystemItem> sourceItems,
-        List<FileSystemItem> destinationItems,
-        string sourceBasePath,
-        string destinationBasePath)
-    {
-        var result = new FileSystemComparisonResult();
-
-        // Normalize base paths for comparison
-        var normalizedSourceBase = NormalizePath(sourceBasePath);
-        var normalizedDestBase = NormalizePath(destinationBasePath);
-
-        // Check if source and destination are the same (case-insensitive on Windows)
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        if (normalizedSourceBase.Equals(normalizedDestBase, comparison))
-        {
-            _logger.LogWarning("Source and destination paths are the same: {Path}. Skipping backup comparison.", normalizedSourceBase);
-            return result; // Return empty result - nothing to copy or delete
-        }
-
-        // Create dictionaries for quick lookup by relative path
-        // Use case-insensitive comparison on Windows
-        var pathComparer = OperatingSystem.IsWindows()
-            ? StringComparer.OrdinalIgnoreCase
-            : StringComparer.Ordinal;
-        var sourceFilesByRelativePath = new Dictionary<string, FileSystemItem>(pathComparer);
-        var destinationFilesByRelativePath = new Dictionary<string, FileSystemItem>(pathComparer);
-
-
-        result.NewItems = sourceItems.Where(
-            s => !destinationItems.Any(
-                d => GetPathDifference(d.PathName, destinationBasePath) + d.Name == GetPathDifference(s.PathName, sourceBasePath) + s.Name))
-            .ToList();
-
-        result.DeletedItems = destinationItems.Where(
-            d => !sourceItems.Any(
-                s => GetPathDifference(s.PathName, sourceBasePath) + s.Name == GetPathDifference(d.PathName, destinationBasePath) + d.Name))
-            .ToList();
-
-        result.EditedItems = sourceItems.Where(
-            s => destinationItems.Any(
-                d => GetPathDifference(s.PathName, sourceBasePath) + s.Name == GetPathDifference(d.PathName, destinationBasePath) + d.Name && d.Size != s.Size))
-            .ToList();
-
-        // result.TransferredItems = result.NewItems.Where(n => result.DeletedItems.Any(
-        //     d => d.Md5 == n.Md5 && n.PathName == d.PathName || n.Name != d.Name))
-        //     .ToList();
-
-        // result.NewItems.RemoveAll(item => result.TransferredItems.Contains(item));
-        // result.DeletedItems.RemoveAll(d =>
-        //      result.TransferredItems.Any(t => GetPathDifference(t.PathName, sourceBasePath) == GetPathDifference(d.PathName, destinationBasePath)));
-
-        // var teste = result.TransferredItems[1];
-        // var teste3 = GetPathDifference(teste.PathName, sourceBasePath);
-        // var teste4 = GetPathDifference(result.DeletedItems[0].PathName, destinationBasePath);
-
-        //string id1 = FileId.Get(teste.PathName);
-
-
-        return result;
-    }
-
-    private string GetPathDifference(string fullPath, string basePath)
-    {
-        return fullPath.Replace(basePath, "").TrimStart('\\', '/');
-    }
-
-
-    private string NormalizePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return string.Empty;
-
-        // Normalize path separators and remove trailing separators
-        var normalized = path.Replace('\\', '/').TrimEnd('/');
-
-        // On Windows, preserve drive letter format (C:)
-        if (OperatingSystem.IsWindows() && normalized.Length >= 2 && normalized[1] == ':')
-        {
-            normalized = normalized.Replace('/', '\\');
-        }
-
-        return normalized;
-    }
-
-    private string GetRelativePath(string fullPath, string basePath)
-    {
-        if (string.IsNullOrWhiteSpace(fullPath) || string.IsNullOrWhiteSpace(basePath))
-            return string.Empty;
-
-        var normalizedFull = NormalizePath(fullPath);
-        var normalizedBase = NormalizePath(basePath);
-
-        // Handle case-insensitive comparison on Windows
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        if (!normalizedFull.StartsWith(normalizedBase, comparison))
-        {
-            // Path is not under base path - return just the filename
-            return Path.GetFileName(normalizedFull);
-        }
-
-        // Extract relative path
-        var relativePath = normalizedFull.Substring(normalizedBase.Length).TrimStart('/', '\\');
-
-        // Normalize path separators to forward slashes for consistency
-        return relativePath.Replace('\\', '/');
-    }
-
-    private async Task DeleteFilesFromDestination(List<FileSystemItem> itemsToDelete, string destinationBasePath, Guid backupPlanId, Guid executionId, LogDbContext logContext)
-    {
-        if (itemsToDelete.Count == 0)
-        {
-            _logger.LogInformation("No files to delete from destination");
-            return;
-        }
-
-        _logger.LogInformation("Deleting {Count} files from destination", itemsToDelete.Count);
-
-        int deletedCount = 0;
-        int errorCount = 0;
-
-        //first the itens more deep to be able to delete empty directories
-        // First delete the items inside the directories and the directory will be the last item to be deleted, and will be empty
-        var delete = itemsToDelete.OrderByDescending(i => i.PathName.Length).ToList();
-
-        foreach (var item in delete)
-        {
-            // Update current file being processed
-            try
-            {
-                var execution = await logContext.BackupExecutions.FindAsync(executionId);
-                if (execution != null)
-                {
-                    execution.currentFileName = Path.GetFileName(item.PathName);
-                    execution.currentFilePath = item.PathName;
-                    await logContext.SaveChangesAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
-            }
-
-            try
-            {
-                if (item.Type == "file" && System.IO.File.Exists(item.PathName))
-                {
-                    System.IO.File.Delete(item.PathName);
-                    deletedCount++;
-                    _logger.LogDebug("Deleted file: {Path}", item.PathName);
-
-                    // Log the deletion
-                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Delete", "Does not exist on source");
-                }
-                else if (item.Type == "file")
-                {
-                    _logger.LogWarning("File does not exist, skipping deletion: {Path}", item.PathName);
-                    // Log as ignored since file doesn't exist
-                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", "File does not exist, cannot delete");
-                }
-                else if (item.Type == "directory" && Directory.Exists(item.PathName))
-                {
-                    Directory.Delete(item.PathName, true);
-                    deletedCount++;
-                    _logger.LogDebug("Deleted directory: {Path}", item.PathName);
-
-                    // Log the deletion
-                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Delete", "Does not exist on source");
-                }
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                errorCount++;
-                _logger.LogWarning(ex, "Access denied when deleting file: {Path}", item.PathName);
-                if (item.Type == "file")
-                {
-                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", $"Access denied: {ex.Message}");
-                }
-            }
-            catch (Exception ex)
-            {
-                errorCount++;
-                _logger.LogError(ex, "Error deleting file: {Path}", item.PathName);
-                if (item.Type == "file")
-                {
-                    await LogFileOperation(logContext, backupPlanId, executionId, item, "Ignored", $"Error: {ex.Message}");
-                }
-            }
-        }
-
-        _logger.LogInformation("Deletion complete: {DeletedCount} deleted, {ErrorCount} errors", deletedCount, errorCount);
-    }
-
-    private class CopiedFileInfo
-    {
-        public string SourcePath { get; set; } = string.Empty;
-        public string DestinationPath { get; set; } = string.Empty;
-    }
-
-    private async IAsyncEnumerable<CopiedFileInfo> CopyFilesFromSource(
-        List<FileSystemItem> itemsToCopy,
-        Agent agent,
-        string sourceBasePath,
-        string destinationBasePath,
-        Guid backupPlanId,
-        Guid executionId,
-        LogDbContext logContext,
-        string reason)
-    {
-        if (itemsToCopy.Count == 0)
-        {
-            _logger.LogInformation("No files to copy from source");
-            yield break;
-        }
-
-        _logger.LogInformation("Copying {Count} files from source to destination", itemsToCopy.Count);
-
-        int copiedCount = 0;
-        int errorCount = 0;
-
-        foreach (var sourceItem in itemsToCopy)
-        {
-            // Only process files, not directories
-            if (sourceItem.Type != "file")
-            {
-                continue;
-            }
-
-            // Update current file being processed
-            try
-            {
-                var execution = await logContext.BackupExecutions.FindAsync(executionId);
-                if (execution != null)
-                {
-                    execution.currentFileName = Path.GetFileName(sourceItem.PathName);
-                    execution.currentFilePath = sourceItem.PathName;
-                    await logContext.SaveChangesAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to update current file for execution {ExecutionId}", executionId);
-            }
-
-            // Calculate destination path
-            var relativePath = GetRelativePath(sourceItem.PathName, NormalizePath(sourceBasePath));
-            var destinationPath = Path.Combine(destinationBasePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
-
-            CopiedFileInfo? copiedFile = null;
-            try
-            {
-                // Ensure destination directory exists
-                var destinationDir = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
-                {
-                    Directory.CreateDirectory(destinationDir);
-                    _logger.LogDebug("Created destination directory: {Path}", destinationDir);
-                }
-
-                // Download file from agent
-                await DownloadAndSaveFile(agent, sourceItem.PathName, destinationPath);
-
-                copiedCount++;
-                copiedFile = new CopiedFileInfo
-                {
-                    SourcePath = sourceItem.PathName,
-                    DestinationPath = destinationPath
-                };
-
-                // Log the successful copy
-                await LogFileOperation(logContext, backupPlanId, executionId, sourceItem, "Copy", reason);
-            }
-            catch (Exception ex)
-            {
-                errorCount++;
-                _logger.LogError(ex, "Error copying file: {Path}", sourceItem.PathName);
-                // Log the failed copy as ignored
-                await LogFileOperation(logContext, backupPlanId, executionId, sourceItem, "Ignored", $"Error copying: {ex.Message}");
-            }
-
-            // Yield the file info outside the try-catch so it can be logged immediately
-            if (copiedFile != null)
-            {
-                yield return copiedFile;
-            }
-        }
-
-        _logger.LogInformation("Copy complete: {CopiedCount} copied, {ErrorCount} errors", copiedCount, errorCount);
-    }
-
-    private async Task DownloadAndSaveFile(Agent agent, string sourceFilePath, string destinationFilePath)
-    {
-        // Determine base URL
-        string baseUrl;
-        var hostname = agent.hostname;
-
-        if (hostname.StartsWith("http://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            string[] protocolsToTry = new[] { "https://", "http://" };
-            foreach (var protocol in protocolsToTry)
-            {
-                var testUrl = $"{protocol}{hostname}/Download?filePath={Uri.EscapeDataString(sourceFilePath)}";
-                var result = await TryDownloadFileAsync(testUrl, agent.token!, destinationFilePath);
-                if (result.Success)
-                {
-                    return;
-                }
-            }
-            throw new HttpRequestException($"Failed 4 to connect to agent at {agent.hostname} to download file");
-        }
-
-        var downloadUrl = $"{baseUrl}/Download?filePath={Uri.EscapeDataString(sourceFilePath)}";
-        var response = await TryDownloadFileAsync(downloadUrl, agent.token!, destinationFilePath);
-
-        if (!response.Success)
-        {
-            throw new HttpRequestException($"Failed to download file: {response.ErrorMessage}");
-        }
-    }
-
-    private async Task<(bool Success, string ErrorMessage)> TryDownloadFileAsync(string url, string agentToken, string destinationPath)
-    {
-        // Configure HttpClient to accept self-signed certificates and invalid certificates
-        var httpClientHandler = new HttpClientHandler();
-
-        httpClientHandler.ServerCertificateCustomValidationCallback =
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors sslPolicyErrors) =>
-            {
-                return true;
             };
 
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromMinutes(10); // Longer timeout for file downloads
-
-        // Add the authentication token header
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
-        try
-        {
-            _logger.LogInformation("Downloading file from: {Url}", url);
-
-            var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-
-            if (response.IsSuccessStatusCode)
+            process.ErrorDataReceived += (sender, e) =>
             {
-                // Ensure destination directory exists
-                var destinationDir = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
+                if (!string.IsNullOrEmpty(e.Data))
                 {
-                    Directory.CreateDirectory(destinationDir);
+                    errorBuilder.AppendLine(e.Data);
+                    _logger.LogDebug("Rsync error: {Error}", e.Data);
                 }
+            };
 
-                // Stream the file to disk
-                using (var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var httpStream = await response.Content.ReadAsStreamAsync())
-                {
-                    await httpStream.CopyToAsync(fileStream);
-                }
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
 
-                _logger.LogInformation("Successfully downloaded and saved file: {DestinationPath}", destinationPath);
-                return (true, string.Empty);
+            await process.WaitForExitAsync();
+
+            var endTime = DateTime.UtcNow;
+            var duration = endTime - startTime;
+            var output = outputBuilder.ToString();
+            var error = errorBuilder.ToString();
+
+            // Save any remaining log entries in the batch
+            List<LogEntry> finalBatch;
+            lock (batchLock)
+            {
+                finalBatch = new List<LogEntry>(logEntriesBatch);
+                logEntriesBatch.Clear();
             }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            
+            if (finalBatch.Count > 0)
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, "Authentication failed: Invalid or expired token");
+                using var logScope = _serviceScopeFactory.CreateScope();
+                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                logContext.LogEntries.AddRange(finalBatch);
+                await logContext.SaveChangesAsync();
+                _logger.LogDebug("Saved final batch of {Count} log entries to database", finalBatch.Count);
+            }
+
+            // Log rsync finish to database
+            using (var logScope = _serviceScopeFactory.CreateScope())
+            {
+                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                
+                // Update BackupExecution
+                var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                if (backupExecution != null)
+                {
+                    backupExecution.endDateTime = endTime;
+                }
+
+                // Log rsync finish
+                var finishDescription = process.ExitCode == 0
+                    ? $"Rsync finished successfully. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms"
+                    : $"Rsync finished with failure. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms, Error: {error}";
+
+                var finishLogEntry = new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlan.id,
+                    executionId = executionId,
+                    datetime = endTime,
+                    fileName = "rsync-finish",
+                    filePath = "",
+                    action = process.ExitCode == 0 ? LogEntry.Action.System.ToString() : LogEntry.Action.CopyError.ToString(),
+                    reason = finishDescription
+                };
+                logContext.LogEntries.Add(finishLogEntry);
+
+                await logContext.SaveChangesAsync();
+            }
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogError("Rsync finished with failure. Exit code: {ExitCode}, Duration: {Duration}ms, Error: {Error}", 
+                    process.ExitCode, duration.TotalMilliseconds, error);
+                throw new Exception($"Rsync failed: {error}");
+            }
+
+            _logger.LogInformation("Rsync finished successfully. Exit code: {ExitCode}, Duration: {Duration}ms", 
+                process.ExitCode, duration.TotalMilliseconds);
+
+            // Parse statistics from rsync output
+            ParseRsyncStatistics(output, result, duration.TotalSeconds);
+
+            // Save all rsync statistics to database at the end
+            if (!isSimulation && process.ExitCode == 0)
+            {
+                using (var logScope = _serviceScopeFactory.CreateScope())
+                {
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    
+                    // Save transfer speed
+                    if (result.TransferSpeedBytesPerSecond > 0)
+                    {
+                        var transferSpeedLogEntry = new LogEntry
+                        {
+                            id = Guid.NewGuid(),
+                            backupPlanId = backupPlan.id,
+                            executionId = executionId,
+                            datetime = endTime,
+                            fileName = "rsync-transfer-speed",
+                            filePath = "",
+                            action = LogEntry.Action.System.ToString(),
+                            reason = $"TransferSpeed:{result.TransferSpeedBytesPerSecond}"
+                        };
+                        logContext.LogEntries.Add(transferSpeedLogEntry);
+                    }
+
+                    // Save all rsync statistics as a single log entry
+                    var statsLogEntry = new LogEntry
+                    {
+                        id = Guid.NewGuid(),
+                        backupPlanId = backupPlan.id,
+                        executionId = executionId,
+                        datetime = endTime,
+                        fileName = "rsync-stats",
+                        filePath = "",
+                        action = LogEntry.Action.System.ToString(),
+                        reason = $"TotalFiles:{result.TotalFiles}|RegularFiles:{result.RegularFiles}|Directories:{result.Directories}|CreatedFiles:{result.CreatedFiles}|DeletedFiles:{result.DeletedFiles}|TransferredFiles:{result.TransferredFiles}|TotalFileSize:{result.TotalFileSize}|TotalTransferredSize:{result.TotalTransferredSize}|LiteralData:{result.LiteralData}|MatchedData:{result.MatchedData}|FileListSize:{result.FileListSize}|FileListGenerationTime:{result.FileListGenerationTime}|FileListTransferTime:{result.FileListTransferTime}|TotalBytesSent:{result.TotalBytesSent}|TotalBytesReceived:{result.TotalBytesReceived}|TransferSpeed:{result.TransferSpeedBytesPerSecond}|Speedup:{result.Speedup}"
+                    };
+                    logContext.LogEntries.Add(statsLogEntry);
+                    await logContext.SaveChangesAsync();
+                }
+            }
+
+            // Parse output for simulation mode
+            if (isSimulation)
+            {
+                ParseRsyncOutput(output, result);
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to download file from {Url}: {StatusCode}, {Error}",
-                    url, response.StatusCode, errorContent);
-                return (false, $"HTTP {response.StatusCode}: {errorContent}");
+                _logger.LogInformation("Backup completed successfully for backup plan {BackupPlanId}", backupPlan.id);
             }
+
+            return result;
         }
-        catch (TaskCanceledException ex)
+        finally
         {
-            _logger.LogError(ex, "Timeout downloading file from {Url}", url);
-            return (false, "Request timeout");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error downloading file from {Url}", url);
-            return (false, ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Simulates a backup plan execution by creating execution logs without actually performing file operations.
-    /// This method creates BackupExecution and LogEntry records to show what would happen.
-    /// </summary>
-    public async Task<SimulationResult> SimulateBackupPlanAsync(BackupPlan backupPlan, Agent agent)
-    {
-        Guid executionId = Guid.Empty;
-        try
-        {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
-            var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
-
-            _logger.LogInformation("Simulating backup plan {BackupPlanId} for agent {AgentHostname}", backupPlan.id, agent.hostname);
-
-            // Create backup execution record for simulation
-            var startDateTime = DateTime.UtcNow;
-            var executionName = $"{startDateTime:yyyy/MM/dd HH:mm} - Simulation - {backupPlan.name}";
-            var execution = new BackupExecution
-            {
-                id = Guid.NewGuid(),
-                backupPlanId = backupPlan.id,
-                name = executionName,
-                startDateTime = startDateTime
-            };
-            executionId = execution.id;
-
-            logContext.BackupExecutions.Add(execution);
-            await logContext.SaveChangesAsync();
-
-            _logger.LogInformation("Created simulation execution {ExecutionId} for backup plan {BackupPlanId}", executionId, backupPlan.id);
-
-            // Reload agent from database to ensure we have the latest token
-            var agentFromDb = await dbContext.Agents.FindAsync(agent.id);
-            if (agentFromDb == null)
-            {
-                _logger.LogError("Agent {AgentId} not found in database", agent.id);
-                throw new InvalidOperationException($"Agent {agent.id} not found");
-            }
-
-            // Check if agent has a token
-            if (string.IsNullOrEmpty(agentFromDb.token))
-            {
-                _logger.LogError("Agent {AgentHostname} does not have a token. Cannot simulate backup plan {BackupPlanId}",
-                    agentFromDb.hostname, backupPlan.id);
-                throw new InvalidOperationException($"Agent {agentFromDb.hostname} is not authenticated. Please pair the agent first.");
-            }
-
-            // Call the /Look endpoint to get file system items from source (remote agent)
-            var sourceFileSystemItems = await CallLookEndpointAsync(agentFromDb, backupPlan.source);
-
-            _logger.LogInformation("Retrieved {Count} file system items from agent {AgentHostname} for path {Source}",
-                sourceFileSystemItems.Count, agentFromDb.hostname, backupPlan.source);
-
-            // Get file system items from local destination
-            var destinationFileSystemItems = GetLocalFileSystemItems(backupPlan.destination);
-
-            _logger.LogInformation("Retrieved {Count} file system items from local destination {Destination}",
-                destinationFileSystemItems.Count, backupPlan.destination);
-
-            // Compare source and destination to determine what to copy and delete
-            var comparisonResult = CompareFileSystemItems(
-                sourceFileSystemItems,
-                destinationFileSystemItems,
-                backupPlan.source,
-                backupPlan.destination);
-
-            // Build simulation result
-            var simulationResult = new SimulationResult();
-            var allItems = new List<SimulationItem>();
-
-            // Process new items (to be copied) - create log entries
-            foreach (var item in comparisonResult.NewItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", "Does not exist on destination");
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Copy",
-                        Reason = "Does not exist on destination"
-                    });
-                }
-            }
-
-            // Process edited items (to be copied) - create log entries
-            foreach (var item in comparisonResult.EditedItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    var destItem = destinationFileSystemItems.FirstOrDefault(d => d.Name == item.Name);
-                    var reason = $"Changed on source (size: {destItem?.Size ?? 0} -> {item.Size})";
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Copy", reason);
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Copy",
-                        Reason = reason
-                    });
-                }
-            }
-
-            // Process deleted items (to be deleted) - create log entries
-            foreach (var item in comparisonResult.DeletedItems)
-            {
-                if (item.Type == "file") // Only show files, not directories
-                {
-                    await LogFileOperation(logContext, backupPlan.id, executionId, item, "Delete", "Does not exist on source");
-                    allItems.Add(new SimulationItem
-                    {
-                        FileName = item.Name,
-                        FilePath = item.PathName,
-                        Size = item.Size,
-                        Action = "Delete",
-                        Reason = "Does not exist on source"
-                    });
-                }
-            }
-
-            // Log ignored files (files that exist in both with same size)
-            await LogIgnoredFiles(sourceFileSystemItems, destinationFileSystemItems, backupPlan.id, executionId, logContext);
-
-            // Sort by action (Copy first, then Delete), then by filename
-            allItems = allItems
-                .OrderBy(i => i.Action == "Delete") // Copy items first (false < true)
-                .ThenBy(i => i.FileName)
-                .ToList();
-
-            simulationResult.Items = allItems;
-            simulationResult.TotalItems = allItems.Count;
-            simulationResult.ItemsToCopy = allItems.Count(i => i.Action == "Copy");
-            simulationResult.ItemsToDelete = allItems.Count(i => i.Action == "Delete");
-
-            // Update execution end time
-            execution.endDateTime = DateTime.UtcNow;
-            await logContext.SaveChangesAsync();
-
-            _logger.LogInformation(
-                "Simulation complete: {TotalCount} items, {CopyCount} to copy, {DeleteCount} to delete",
-                simulationResult.TotalItems,
-                simulationResult.ItemsToCopy,
-                simulationResult.ItemsToDelete);
-
-            // Create notification
+            // Clean up temporary SSH key file
             try
             {
-                var notificationService = scope.ServiceProvider.GetService<INotificationService>();
-                if (notificationService != null)
+                if (File.Exists(sshKeyPath))
                 {
-                    await notificationService.CreateSimulationCompletedNotificationAsync(
-                        backupPlan.id,
-                        executionId,
-                        backupPlan.name,
-                        simulationResult.TotalItems,
-                        simulationResult.ItemsToCopy,
-                        simulationResult.ItemsToDelete);
+                    File.Delete(sshKeyPath);
                 }
             }
-            catch (Exception notifEx)
+            catch (Exception ex)
             {
-                _logger.LogWarning(notifEx, "Failed to create notification for simulation of backup plan {BackupPlanId}", backupPlan.id);
+                _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {SshKeyPath}", sshKeyPath);
             }
-
-            return simulationResult;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error simulating backup plan {BackupPlanId}", backupPlan.id);
+    }
 
-            // Update execution end time even on error
-            if (executionId != Guid.Empty)
+    private async Task<int> RunDryRunAndCountFiles(BackupPlan backupPlan, Agent agent, string sshKeyPath, Guid executionId)
+    {
+        try
+        {
+            // Build rsync command with --dry-run
+            var rsyncArgs = new StringBuilder();
+            rsyncArgs.Append("--dry-run -avz --delete --itemize-changes --stats ");
+            
+            // Build SSH command for -e option
+            var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
+            rsyncArgs.Append($"-e \"{sshCommand}\" ");
+            
+            var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
+            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
+
+            var processStartInfo = new ProcessStartInfo
             {
-                try
+                FileName = "rsync",
+                Arguments = rsyncArgs.ToString(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = processStartInfo };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
                 {
-                    using var scope = _serviceScopeFactory.CreateScope();
-                    var logContext = scope.ServiceProvider.GetRequiredService<LogDbContext>();
-                    var execution = await logContext.BackupExecutions.FindAsync(executionId);
-                    if (execution != null)
+                    outputBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync();
+
+            var output = outputBuilder.ToString();
+            
+            // Parse the output to count files
+            // Look for "Number of files:" line in stats
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                if (trimmedLine.StartsWith("Number of files:"))
+                {
+                    var match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.]+)");
+                    if (match.Success)
                     {
-                        execution.endDateTime = DateTime.UtcNow;
-                        await logContext.SaveChangesAsync();
+                        var count = ParseNumber(match.Groups[1].Value);
+                        _logger.LogInformation("Dry-run found {FileCount} files to process", count);
+                        return count;
                     }
                 }
-                catch (Exception updateEx)
+            }
+            
+            // If stats not found, count from itemize-changes output
+            int fileCount = 0;
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                // Count lines that represent file operations (not progress or stats)
+                if ((trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("*deleting")) &&
+                    !trimmedLine.StartsWith("receiving incremental file list") &&
+                    !trimmedLine.Contains("Number of") &&
+                    !trimmedLine.Contains("Total file size") &&
+                    !trimmedLine.Contains("Total transferred file size"))
                 {
-                    _logger.LogWarning(updateEx, "Failed to update simulation execution end time for {ExecutionId}", executionId);
+                    fileCount++;
                 }
             }
-
-            throw;
-        }
-    }
-
-    private async Task LogFileOperation(LogDbContext logContext, Guid backupPlanId, Guid executionId, FileSystemItem item, string action, string reason)
-    {
-        try
-        {
-            var logEntry = new LogEntry
-            {
-                id = Guid.NewGuid(),
-                backupPlanId = backupPlanId,
-                executionId = executionId,
-                datetime = DateTime.UtcNow,
-                fileName = item.Name,
-                filePath = item.PathName,
-                size = item.Size,
-                action = action,
-                reason = reason
-            };
-
-            logContext.LogEntries.Add(logEntry);
-            await logContext.SaveChangesAsync();
+            
+            _logger.LogInformation("Dry-run counted {FileCount} files from output", fileCount);
+            return fileCount;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to log file operation for {FileName}", item.Name);
+            _logger.LogError(ex, "Error running dry-run: {Error}", ex.Message);
+            return 0;
         }
     }
 
-    private async Task LogMilestoneEvent(LogDbContext logContext, Guid backupPlanId, Guid executionId, string eventType, string description)
+    private LogEntry? ParseRsyncLine(string line, Guid backupPlanId, Guid executionId, DateTime timestamp)
     {
-        try
+        var trimmedLine = line.Trim();
+        
+        // Skip empty lines, progress lines, and stats lines
+        if (string.IsNullOrWhiteSpace(trimmedLine) ||
+            trimmedLine.StartsWith("receiving incremental file list") ||
+            trimmedLine.StartsWith("Number of files:") ||
+            trimmedLine.StartsWith("Number of created files:") ||
+            trimmedLine.StartsWith("Number of deleted files:") ||
+            trimmedLine.StartsWith("Number of regular files transferred:") ||
+            trimmedLine.StartsWith("Total file size:") ||
+            trimmedLine.StartsWith("Total transferred file size:") ||
+            trimmedLine.StartsWith("Literal data:") ||
+            trimmedLine.StartsWith("Matched data:") ||
+            trimmedLine.StartsWith("File list size:") ||
+            trimmedLine.StartsWith("File list generation time:") ||
+            trimmedLine.StartsWith("File list transfer time:") ||
+            trimmedLine.StartsWith("Total bytes sent:") ||
+            trimmedLine.StartsWith("Total bytes received:") ||
+            (trimmedLine.StartsWith("sent") && trimmedLine.Contains("bytes/sec")) ||
+            trimmedLine.StartsWith("total size is") ||
+            trimmedLine.Contains("%") && trimmedLine.Contains("kB/s") ||
+            trimmedLine.StartsWith("Warning:") ||
+            trimmedLine.StartsWith("Building file list"))
         {
-            var logEntry = new LogEntry
-            {
-                id = Guid.NewGuid(),
-                backupPlanId = backupPlanId,
-                executionId = executionId,
-                datetime = DateTime.UtcNow,
-                fileName = "[System Event]",
-                filePath = "",
-                size = null,
-                action = eventType,
-                reason = description
-            };
-
-            logContext.LogEntries.Add(logEntry);
-            await logContext.SaveChangesAsync();
+            return null;
         }
-        catch (Exception ex)
+        
+        // Parse deletion lines (e.g., "*deleting   license.rtf")
+        if (trimmedLine.StartsWith("*deleting"))
         {
-            _logger.LogWarning(ex, "Failed to log milestone event: {EventType}", eventType);
-        }
-    }
-
-    private async Task LogIgnoredFiles(
-        List<FileSystemItem> sourceItems,
-        List<FileSystemItem> destinationItems,
-        Guid backupPlanId,
-        Guid executionId,
-        LogDbContext logContext)
-    {
-        try
-        {
-            // Find files that exist in both source and destination with the same size (ignored)
-            var sourceFiles = sourceItems.Where(s => s.Type == "file").ToList();
-            var destinationFiles = destinationItems.Where(d => d.Type == "file").ToList();
-
-            var ignoredFiles = sourceFiles
-                .Where(s => destinationFiles.Any(d => d.Name == s.Name && d.Size == s.Size))
-                .ToList();
-
-            foreach (var file in ignoredFiles)
+            var match = Regex.Match(trimmedLine, @"^\*deleting\s+(.+)$");
+            if (match.Success)
             {
-                await LogFileOperation(logContext, backupPlanId, executionId, file, "Ignored", "File exists in both source and destination with same size");
+                var filePath = match.Groups[1].Value.Trim();
+                var fileName = Path.GetFileName(filePath);
+                
+                return new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlanId,
+                    executionId = executionId,
+                    datetime = timestamp,
+                    fileName = fileName,
+                    filePath = filePath,
+                    action = LogEntry.Action.Delete.ToString(),
+                    reason = "File deleted by rsync"
+                };
             }
         }
-        catch (Exception ex)
+        
+        // Parse itemize-changes lines (e.g., ">f+++++++++ wefwef" or ".d..t...... ./")
+        if (trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("."))
         {
-            _logger.LogWarning(ex, "Failed to log ignored files");
+            // Skip lines that are just directory timestamp updates (e.g., ".d..t...... ./")
+            if (trimmedLine.StartsWith(".") && (trimmedLine.Contains("./") || trimmedLine.TrimEnd() == "."))
+            {
+                return null;
+            }
+
+            // Match pattern: >f+++++++++ filepath or <f+++++++++ filepath or .d..t...... filepath
+            var match = Regex.Match(trimmedLine, @"^([<>.])([fdLDS])([.+\-<>chstT]+)\s+(.+)$");
+            if (match.Success)
+            {
+                var direction = match.Groups[1].Value; // '>' receiving, '<' sending, '.' update
+                var itemType = match.Groups[2].Value; // 'f' file, 'd' directory, 'L' symlink, etc.
+                var flags = match.Groups[3].Value;
+                var filePath = match.Groups[4].Value.Trim();
+                
+                // Skip if path is just "./" or "." or empty
+                if (string.IsNullOrWhiteSpace(filePath) || filePath == "./" || filePath == ".")
+                {
+                    return null;
+                }
+                
+                var fileName = Path.GetFileName(filePath);
+                if (string.IsNullOrWhiteSpace(fileName))
+                {
+                    fileName = filePath;
+                }
+
+                // Determine action based on flags
+                LogEntry.Action action;
+                string reason;
+
+                if (flags.Contains("+++++++++") || flags.Contains("+++++"))
+                {
+                    // New file/directory
+                    action = LogEntry.Action.Copy;
+                    reason = itemType == "d" ? "New directory created" : "New file copied";
+                }
+                else if (flags.Contains(">"))
+                {
+                    // Size changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File size changed";
+                }
+                else if (flags.Contains("c"))
+                {
+                    // Checksum changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File checksum changed";
+                }
+                else if (flags.Contains("t") || flags.Contains("T"))
+                {
+                    // Timestamp changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File timestamp updated";
+                }
+                else if (flags.Contains("h"))
+                {
+                    // Hard link
+                    action = LogEntry.Action.Copy;
+                    reason = "Hard link created";
+                }
+                else if (flags.Contains("s"))
+                {
+                    // Size changed
+                    action = LogEntry.Action.Copy;
+                    reason = "File size changed";
+                }
+                else
+                {
+                    // Other changes
+                    action = LogEntry.Action.Copy;
+                    reason = "File updated";
+                }
+
+                return new LogEntry
+                {
+                    id = Guid.NewGuid(),
+                    backupPlanId = backupPlanId,
+                    executionId = executionId,
+                    datetime = timestamp,
+                    fileName = fileName,
+                    filePath = filePath,
+                    action = action.ToString(),
+                    reason = reason
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private void ParseRsyncOutput(string output, ExecutionResult result)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var items = new List<ExecutionItems>();
+
+        foreach (var line in lines)
+        {
+            // Parse rsync output lines (e.g., ">f+++++++++ file.txt")
+            if (line.StartsWith(">") || line.StartsWith("<"))
+            {
+                var match = Regex.Match(line, @"^[<>]([fd])([.+\-]+)\s+(.+)$");
+                if (match.Success)
+                {
+                    var itemType = match.Groups[1].Value; // 'f' for file, 'd' for directory
+                    var flags = match.Groups[2].Value;
+                    var path = match.Groups[3].Value.Trim();
+
+                    var item = new ExecutionItems
+                    {
+                        FilePath = path,
+                        FileName = Path.GetFileName(path),
+                        Action = "Copy",
+                        Reason = itemType == "d" ? "Directory" : "File"
+                    };
+
+                    items.Add(item);
+                }
+            }
+            // Parse deletion lines
+            else if (line.Trim().StartsWith("*deleting"))
+            {
+                var match = Regex.Match(line.Trim(), @"^\*deleting\s+(.+)$");
+                if (match.Success)
+                {
+                    var path = match.Groups[1].Value.Trim();
+                    var item = new ExecutionItems
+                    {
+                        FilePath = path,
+                        FileName = Path.GetFileName(path),
+                        Action = "Delete",
+                        Reason = "File deleted"
+                    };
+                    items.Add(item);
+                }
+            }
+        }
+
+        result.Items = items;
+        result.TotalItems = items.Count;
+        result.ItemsToCopy = items.Count(i => i.Action == "Copy");
+        result.ItemsToDelete = items.Count(i => i.Action == "Delete");
+    }
+
+    private void ParseRsyncStatistics(string output, ExecutionResult result, double durationSeconds)
+    {
+        result.DurationSeconds = durationSeconds;
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+
+            // Number of files: 201 (reg: 163, dir: 38)
+            if (trimmedLine.StartsWith("Number of files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.]+)\s+\(reg:\s+([\d.]+),\s+dir:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.TotalFiles = ParseNumber(match.Groups[1].Value);
+                    result.RegularFiles = ParseNumber(match.Groups[2].Value);
+                    result.Directories = ParseNumber(match.Groups[3].Value);
+                }
+            }
+            // Number of created files: 1 (reg: 1)
+            else if (trimmedLine.StartsWith("Number of created files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of created files:\s+([\d.]+)\s+\(reg:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.CreatedFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Number of deleted files: 1 (reg: 1)
+            else if (trimmedLine.StartsWith("Number of deleted files:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of deleted files:\s+([\d.]+)\s+\(reg:\s+([\d.]+)\)");
+                if (match.Success)
+                {
+                    result.DeletedFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Number of regular files transferred: 1
+            else if (trimmedLine.StartsWith("Number of regular files transferred:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Number of regular files transferred:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TransferredFiles = ParseNumber(match.Groups[1].Value);
+                }
+            }
+            // Total file size: 42.076.393 bytes
+            else if (trimmedLine.StartsWith("Total file size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total file size:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.TotalFileSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Total transferred file size: 0 bytes
+            else if (trimmedLine.StartsWith("Total transferred file size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total transferred file size:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.TotalTransferredSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Literal data: 0 bytes
+            else if (trimmedLine.StartsWith("Literal data:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Literal data:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.LiteralData = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Matched data: 0 bytes
+            else if (trimmedLine.StartsWith("Matched data:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Matched data:\s+([\d.]+)\s+bytes");
+                if (match.Success)
+                {
+                    result.MatchedData = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // File list size: 4.529
+            else if (trimmedLine.StartsWith("File list size:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list size:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.FileListSize = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // File list generation time: 0,001 seconds
+            else if (trimmedLine.StartsWith("File list generation time:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list generation time:\s+([\d,]+)\s+seconds");
+                if (match.Success)
+                {
+                    result.FileListGenerationTime = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // File list transfer time: 0,000 seconds
+            else if (trimmedLine.StartsWith("File list transfer time:"))
+            {
+                var match = Regex.Match(trimmedLine, @"File list transfer time:\s+([\d,]+)\s+seconds");
+                if (match.Success)
+                {
+                    result.FileListTransferTime = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // Total bytes sent: 90
+            else if (trimmedLine.StartsWith("Total bytes sent:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total bytes sent:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TotalBytesSent = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // Total bytes received: 4.620
+            else if (trimmedLine.StartsWith("Total bytes received:"))
+            {
+                var match = Regex.Match(trimmedLine, @"Total bytes received:\s+([\d.]+)");
+                if (match.Success)
+                {
+                    result.TotalBytesReceived = ParseBytes(match.Groups[1].Value);
+                }
+            }
+            // sent 90 bytes  received 4.620 bytes  9.420,00 bytes/sec
+            else if (trimmedLine.StartsWith("sent") && trimmedLine.Contains("bytes/sec"))
+            {
+                var match = Regex.Match(trimmedLine, @"sent\s+[\d.]+\s+bytes\s+received\s+[\d.]+\s+bytes\s+([\d.,]+)\s+bytes/sec");
+                if (match.Success)
+                {
+                    result.TransferSpeedBytesPerSecond = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+            // total size is 42.076.393  speedup is 8.933,42
+            else if (trimmedLine.StartsWith("total size is") && trimmedLine.Contains("speedup is"))
+            {
+                var match = Regex.Match(trimmedLine, @"total size is\s+[\d.]+\s+speedup is\s+([\d.,]+)");
+                if (match.Success)
+                {
+                    result.Speedup = ParseDecimal(match.Groups[1].Value);
+                }
+            }
+        }
+
+        // Calculate average speed if not already parsed from output and duration is available
+        if (result.TransferSpeedBytesPerSecond == 0 && durationSeconds > 0 && result.TotalTransferredSize > 0)
+        {
+            result.TransferSpeedBytesPerSecond = result.TotalTransferredSize / durationSeconds;
         }
     }
+
+    private int ParseNumber(string value)
+    {
+        // Remove thousand separators (periods) and parse
+        var cleaned = value.Replace(".", "");
+        if (int.TryParse(cleaned, out var result))
+        {
+            return result;
+        }
+        return 0;
+    }
+
+    private long ParseBytes(string value)
+    {
+        // Remove thousand separators (periods) and parse
+        var cleaned = value.Replace(".", "");
+        if (long.TryParse(cleaned, out var result))
+        {
+            return result;
+        }
+        return 0;
+    }
+
+    private double ParseDecimal(string value)
+    {
+        // Replace comma with dot for decimal separator and remove thousand separators
+        var cleaned = value.Replace(".", "").Replace(",", ".");
+        if (double.TryParse(cleaned, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result))
+        {
+            return result;
+        }
+        return 0;
+    }
+
+    public async Task<ExecutionResult> SimulateBackupPlanAsync(BackupPlan backupPlan)
+    {
+        return await ExecuteBackupPlanAsync(backupPlan, false, true);
+    }
+
+
+
+
 }

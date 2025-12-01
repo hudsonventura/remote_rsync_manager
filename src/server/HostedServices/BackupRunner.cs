@@ -48,7 +48,6 @@ public class BackupRunner : IHostedService
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
             
             var backupPlans = dbContext.BackupPlans
-                .Include(bp => bp.agent)
                 .Where(bp => bp.active)
                 .ToList();
             
@@ -90,7 +89,6 @@ public class BackupRunner : IHostedService
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
             
             var backupPlans = dbContext.BackupPlans
-                .Include(bp => bp.agent)
                 .Where(bp => bp.active)
                 .ToList();
             
@@ -109,28 +107,27 @@ public class BackupRunner : IHostedService
                 // Check if the current minute matches the schedule
                 if (nextOccurrence <= now && (now - nextOccurrence).TotalMinutes < 1)
                 {
-                    // Check if agent exists
-                    if (plan.agent == null)
+                    // Check if rsync host is configured
+                    if (string.IsNullOrWhiteSpace(plan.rsyncHost))
                     {
-                        _logger.LogWarning("Backup plan '{Name}' (ID: {Id}) is due to run but has no associated agent. Skipping execution.", 
+                        _logger.LogWarning("Backup plan '{Name}' (ID: {Id}) is due to run but has no rsync host configured. Skipping execution.", 
                             plan.name, plan.id);
                         continue;
                     }
                     
-                    _logger.LogInformation("Backup plan '{Name}' (ID: {Id}) is due to run. Schedule: {Schedule}, Agent: {AgentHostname}", 
-                        plan.name, plan.id, plan.schedule, plan.agent.hostname);
+                    _logger.LogInformation("Backup plan '{Name}' (ID: {Id}) is due to run. Schedule: {Schedule}, RsyncHost: {RsyncHost}", 
+                        plan.name, plan.id, plan.schedule, plan.rsyncHost);
                     
                     // Start backup execution asynchronously
                     // Create a new scope for the async execution to avoid disposing the scope too early
                     var planToExecute = plan; // Capture the plan for the closure
-                    var agentToExecute = plan.agent; // Capture the agent for the closure
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             using var executionScope = _serviceScopeFactory.CreateScope();
                             var executor = executionScope.ServiceProvider.GetRequiredService<BackupPlanExecutor>();
-                            await executor.ExecuteBackupPlanAsync(planToExecute, agentToExecute);
+                            await executor.ExecuteBackupPlanAsync(planToExecute);
                             _logger.LogInformation("Backup plan '{Name}' (ID: {Id}) execution completed", 
                                 planToExecute.name, planToExecute.id);
                         }

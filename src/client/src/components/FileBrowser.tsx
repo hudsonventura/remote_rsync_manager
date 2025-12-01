@@ -6,7 +6,8 @@ import { Folder, File, ArrowLeft, X } from "lucide-react"
 
 interface FileSystemItem {
   name: string
-  path: string
+  pathName: string  // Full path including filename
+  path: string      // Directory path without filename
   type: "file" | "directory"
   size?: number | null
   lastModified: string
@@ -66,11 +67,13 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
 
   const handleItemClick = (item: FileSystemItem) => {
     if (item.type === "directory") {
-      const newPath = item.path
+      // For directories, use pathName (full path) to navigate into it
+      const newPath = item.pathName
       setPathHistory([...pathHistory, newPath])
       loadDirectory(newPath)
     } else {
-      onSelect(item.path)
+      // For files, use pathName (full path including filename)
+      onSelect(item.pathName)
       onClose()
     }
   }
@@ -149,7 +152,7 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
             <div className="space-y-1">
               {items.map((item) => (
                 <button
-                  key={item.path}
+                  key={item.pathName}
                   onClick={() => handleItemClick(item)}
                   className="w-full flex items-center gap-3 p-2 rounded hover:bg-accent text-left transition-colors"
                 >

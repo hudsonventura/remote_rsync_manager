@@ -36,48 +36,18 @@ public class AgentController : ControllerBase
             return BadRequest(new { message = "Hostname is required" });
         }
 
-        if (string.IsNullOrWhiteSpace(request.PairingCode))
-        {
-            return BadRequest(new { message = "Pairing code is required" });
-        }
-
         var hostname = request.Hostname.Trim();
-        var pairingCode = request.PairingCode.Trim();
 
-        // Ping the agent to verify it's reachable
-        var validationResult = await PingAgent(hostname);
-
-        if (!validationResult.Success)
-        {
-            return StatusCode(503, new { 
-                message = validationResult.ErrorMessage
-            });
-        }
-
-        // Verify pairing code and get agent token (required)
-        var pairingResult = await VerifyPairingCode(hostname, pairingCode);
-        if (!pairingResult.Success)
-        {
-            return StatusCode(400, new { 
-                message = pairingResult.ErrorMessage
-            });
-        }
-
-        var agentToken = pairingResult.Token;
-        if (string.IsNullOrEmpty(agentToken))
-        {
-            return StatusCode(500, new { 
-                message = "Failed to generate agent token after pairing verification"
-            });
-        }
-
-        // Agent is reachable and paired, proceed with creation
+        // Create agent with rsync configuration (no token needed for rsync)
         var agent = new Agent
         {
             id = Guid.NewGuid(),
             name = string.IsNullOrWhiteSpace(request.Name) ? "New Agent" : request.Name.Trim(),
             hostname = hostname,
-            token = agentToken // Token is required
+            token = null, // Token not needed for rsync-based agents
+            rsyncUser = request.RsyncUser?.Trim(),
+            rsyncPort = request.RsyncPort ?? 22,
+            rsyncSshKey = request.RsyncSshKey?.Trim()
         };
 
         try
@@ -130,125 +100,637 @@ public class AgentController : ControllerBase
         return Ok(agent);
     }
 
+    [HttpPost("validate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ValidateSshConnection([FromBody] ValidateSshConnectionRequest request)
+    {
+        try
+        {
+            // Check if required fields are present
+            if (string.IsNullOrWhiteSpace(request.Hostname))
+            {
+                return BadRequest(new { message = "Hostname is required" });
+            }
+
+            // Check if SSH key is configured
+            if (string.IsNullOrWhiteSpace(request.RsyncSshKey))
+            {
+                return BadRequest(new { message = "SSH private key is required to validate the connection." });
+            }
+
+            int port = (request.RsyncPort > 0) ? request.RsyncPort : 22;
+            var user = string.IsNullOrWhiteSpace(request.RsyncUser) ? "" : $"{request.RsyncUser}@";
+
+            // Create temporary SSH key file
+            string? tempSshKeyFile = null;
+            try
+            {
+                tempSshKeyFile = CreateTempSshKeyFile(request.RsyncSshKey);
+
+                // Test SSH connection with a simple command (echo test)
+                var sshCommand = "echo 'SSH connection test successful'";
+                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{request.Hostname.Trim()} {sshCommand}";
+
+                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ssh",
+                    Arguments = sshArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Failed to start SSH process");
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("SSH connection validation failed with exit code {ExitCode}. Error: {Error}", process.ExitCode, error);
+                    
+                    // Provide more specific error messages
+                    string errorMessage;
+                    if (error.Contains("Permission denied") || error.Contains("publickey"))
+                    {
+                        errorMessage = "SSH authentication failed. Please verify that:\n" +
+                                     "- The SSH private key is correct\n" +
+                                     "- The corresponding public key is installed on the remote server\n" +
+                                     "- The SSH user has permission to access the server";
+                    }
+                    else if (error.Contains("Connection refused") || error.Contains("Connection timed out"))
+                    {
+                        errorMessage = $"SSH connection failed. Unable to connect to {request.Hostname.Trim()}:{port}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname and port are correct\n" +
+                                     "- The SSH service is running on the remote server\n" +
+                                     "- The server is reachable from this machine\n" +
+                                     "- Firewall rules allow SSH connections";
+                    }
+                    else if (error.Contains("Host key verification failed"))
+                    {
+                        errorMessage = "SSH host key verification failed. This is handled automatically, but if the problem persists, please check the server's host key.";
+                    }
+                    else if (error.Contains("No route to host") || error.Contains("Network is unreachable"))
+                    {
+                        errorMessage = $"Network error: Unable to reach {request.Hostname.Trim()}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname is correct\n" +
+                                     "- The server is online and reachable\n" +
+                                     "- Network connectivity is available";
+                    }
+                    else
+                    {
+                        errorMessage = $"SSH connection failed: {error.Trim()}\n" +
+                                     $"Exit code: {process.ExitCode}";
+                    }
+
+                    return StatusCode(503, new { message = errorMessage });
+                }
+
+                _logger.LogInformation("SSH connection validation successful to {Hostname}", request.Hostname.Trim());
+
+                return Ok(new { 
+                    message = $"SSH connection successful to {request.Hostname.Trim()}:{port}", 
+                    hostname = request.Hostname.Trim(),
+                    port = port,
+                    user = request.RsyncUser ?? "default",
+                    hasSshKey = true,
+                    rsyncUser = request.RsyncUser,
+                    rsyncPort = request.RsyncPort
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating SSH connection");
+                
+                // Provide user-friendly error message
+                string errorMessage;
+                if (ex.Message.Contains("No such file or directory") || ex.Message.Contains("ssh: command not found"))
+                {
+                    errorMessage = "SSH client is not available on this system. Please install OpenSSH client.";
+                }
+                else if (ex.Message.Contains("Failed to start SSH process"))
+                {
+                    errorMessage = "Failed to start SSH process. Please ensure SSH client is properly installed and accessible.";
+                }
+                else
+                {
+                    errorMessage = $"Error testing SSH connection: {ex.Message}";
+                }
+
+                return StatusCode(500, new { message = errorMessage });
+            }
+            finally
+            {
+                // Clean up temporary SSH key file
+                if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && System.IO.File.Exists(tempSshKeyFile))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(tempSshKeyFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error validating SSH connection");
+            return StatusCode(500, new { message = $"An error occurred while validating the SSH connection: {ex.Message}" });
+        }
+    }
+
     [HttpPost("{id}/validate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> ValidateAgent(Guid id)
     {
-        var agent = await _context.Agents.FindAsync(id);
-
-        if (agent == null)
+        try
         {
-            return NotFound(new { message = "Agent not found" });
+            var agent = await _context.Agents.FindAsync(id);
+
+            if (agent == null)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
+
+            // Check if SSH key is configured
+            if (string.IsNullOrWhiteSpace(agent.rsyncSshKey))
+            {
+                return BadRequest(new { message = "Agent does not have SSH key configured. Please add an SSH private key to validate the connection." });
+            }
+
+            // Check if required fields are present
+            if (string.IsNullOrWhiteSpace(agent.hostname))
+            {
+                return BadRequest(new { message = "Agent hostname is required" });
+            }
+
+            int port = (agent.rsyncPort > 0) ? agent.rsyncPort : 22;
+            var user = string.IsNullOrWhiteSpace(agent.rsyncUser) ? "" : $"{agent.rsyncUser}@";
+
+            // Create temporary SSH key file
+            string? tempSshKeyFile = null;
+            try
+            {
+                tempSshKeyFile = CreateTempSshKeyFile(agent.rsyncSshKey);
+
+                // Test SSH connection with a simple command (echo test)
+                var sshCommand = "echo 'SSH connection test successful'";
+                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{agent.hostname} {sshCommand}";
+
+                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ssh",
+                    Arguments = sshArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Failed to start SSH process");
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("SSH connection validation failed with exit code {ExitCode}. Error: {Error}", process.ExitCode, error);
+                    
+                    // Provide more specific error messages
+                    string errorMessage;
+                    if (error.Contains("Permission denied") || error.Contains("publickey"))
+                    {
+                        errorMessage = "SSH authentication failed. Please verify that:\n" +
+                                     "- The SSH private key is correct\n" +
+                                     "- The corresponding public key is installed on the remote server\n" +
+                                     "- The SSH user has permission to access the server";
+                    }
+                    else if (error.Contains("Connection refused") || error.Contains("Connection timed out"))
+                    {
+                        errorMessage = $"SSH connection failed. Unable to connect to {agent.hostname}:{port}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname and port are correct\n" +
+                                     "- The SSH service is running on the remote server\n" +
+                                     "- The server is reachable from this machine\n" +
+                                     "- Firewall rules allow SSH connections";
+                    }
+                    else if (error.Contains("Host key verification failed"))
+                    {
+                        errorMessage = "SSH host key verification failed. This is handled automatically, but if the problem persists, please check the server's host key.";
+                    }
+                    else if (error.Contains("No route to host") || error.Contains("Network is unreachable"))
+                    {
+                        errorMessage = $"Network error: Unable to reach {agent.hostname}.\n" +
+                                     "Please verify that:\n" +
+                                     "- The hostname is correct\n" +
+                                     "- The server is online and reachable\n" +
+                                     "- Network connectivity is available";
+                    }
+                    else
+                    {
+                        errorMessage = $"SSH connection failed: {error.Trim()}\n" +
+                                     $"Exit code: {process.ExitCode}";
+                    }
+
+                    return StatusCode(503, new { message = errorMessage });
+                }
+
+                _logger.LogInformation("SSH connection validation successful for agent {AgentId} to {Hostname}", id, agent.hostname);
+
+                return Ok(new { 
+                    message = $"SSH connection successful to {agent.hostname}:{port}", 
+                    hostname = agent.hostname,
+                    port = port,
+                    user = agent.rsyncUser ?? "default",
+                    hasSshKey = true,
+                    rsyncUser = agent.rsyncUser,
+                    rsyncPort = agent.rsyncPort
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating SSH connection for agent {AgentId}", id);
+                
+                // Provide user-friendly error message
+                string errorMessage;
+                if (ex.Message.Contains("No such file or directory") || ex.Message.Contains("ssh: command not found"))
+                {
+                    errorMessage = "SSH client is not available on this system. Please install OpenSSH client.";
+                }
+                else if (ex.Message.Contains("Failed to start SSH process"))
+                {
+                    errorMessage = "Failed to start SSH process. Please ensure SSH client is properly installed and accessible.";
+                }
+                else
+                {
+                    errorMessage = $"Error testing SSH connection: {ex.Message}";
+                }
+
+                return StatusCode(500, new { message = errorMessage });
+            }
+            finally
+            {
+                // Clean up temporary SSH key file
+                if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && System.IO.File.Exists(tempSshKeyFile))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(tempSshKeyFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                    }
+                }
+            }
         }
-
-        var hostname = agent.hostname;
-        var agentToken = agent.token;
-
-        // First, ping the agent to verify it's reachable
-        var pingResult = await PingAgent(hostname);
-
-        if (!pingResult.Success)
+        catch (Exception ex)
         {
-            return StatusCode(503, new { 
-                message = pingResult.ErrorMessage,
-                hostname = hostname
-            });
-        }
-
-        // If agent has a token, try to call the authenticated endpoint
-        if (string.IsNullOrEmpty(agentToken))
-        {
-            return Ok(new { 
-                message = "Agent is reachable but not authenticated. Please pair the agent with a pairing code.", 
-                hostname = hostname,
-                pingUrl = pingResult.PingUrl,
-                response = pingResult.Response,
-                authenticated = false
-            });
-        }
-
-        // Try to call the authenticated endpoint
-        var authResult = await CallAuthenticatedEndpoint(hostname, agentToken);
-
-        if (authResult.Success)
-        {
-            return Ok(new { 
-                message = "Agent is reachable and authenticated successfully", 
-                hostname = hostname,
-                pingUrl = pingResult.PingUrl,
-                authenticated = true,
-                authResponse = authResult.Response
-            });
-        }
-        else
-        {
-            return StatusCode(401, new { 
-                message = $"Agent is reachable but authentication failed: {authResult.ErrorMessage}",
-                hostname = hostname,
-                pingUrl = pingResult.PingUrl,
-                authenticated = false
-            });
+            _logger.LogError(ex, "Error validating agent {AgentId}", id);
+            return StatusCode(500, new { message = $"An error occurred while validating the agent: {ex.Message}" });
         }
     }
 
-    [HttpPost("{id}/reconnect")]
-    [ProducesResponseType(typeof(Agent), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [HttpGet("{id}/ssh-key")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> ReconnectAgent(Guid id, [FromBody] ReconnectAgentRequest request)
+    public async Task<IActionResult> GetAgentSshKey(Guid id)
     {
-        if (string.IsNullOrWhiteSpace(request.PairingCode))
+        try
         {
-            return BadRequest(new { message = "Pairing code is required" });
-        }
+            var agent = await _context.Agents.FindAsync(id);
 
-        var agent = await _context.Agents.FindAsync(id);
-        if (agent == null)
-        {
-            return NotFound(new { message = "Agent not found" });
-        }
+            if (agent == null)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
 
-        var hostname = agent.hostname;
-        var pairingCode = request.PairingCode.Trim();
-
-        // Ping the agent to verify it's reachable
-        var validationResult = await PingAgent(hostname);
-        if (!validationResult.Success)
-        {
-            return StatusCode(503, new { 
-                message = validationResult.ErrorMessage
+            return Ok(new { 
+                id = agent.id,
+                name = agent.name,
+                hostname = agent.hostname,
+                rsyncSshKey = agent.rsyncSshKey ?? string.Empty,
+                hasSshKey = !string.IsNullOrWhiteSpace(agent.rsyncSshKey)
             });
         }
-
-        // Verify pairing code and get agent token
-        var pairingResult = await VerifyPairingCode(hostname, pairingCode);
-        if (!pairingResult.Success)
+        catch (Exception ex)
         {
-            return StatusCode(400, new { 
-                message = pairingResult.ErrorMessage
-            });
+            _logger.LogError(ex, "Error retrieving SSH key for agent {AgentId}", id);
+            return StatusCode(500, new { message = "An error occurred while retrieving the SSH key" });
         }
-
-        var agentToken = pairingResult.Token;
-        if (string.IsNullOrEmpty(agentToken))
-        {
-            return StatusCode(500, new { 
-                message = "Failed to generate agent token after pairing verification"
-            });
-        }
-
-        // Update agent token
-        agent.token = agentToken;
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Agent {AgentId} reconnected successfully with new token", agent.id);
-
-        return Ok(agent);
     }
+
+    [HttpGet("{id}/browse")]
+    [ProducesResponseType(typeof(List<FileSystemItem>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> BrowseAgentFileSystem(Guid id, [FromQuery] string? dir)
+    {
+        try
+        {
+            var agent = await _context.Agents.FindAsync(id);
+
+            if (agent == null)
+            {
+                return NotFound(new { message = "Agent not found" });
+            }
+
+            if (string.IsNullOrWhiteSpace(agent.rsyncSshKey))
+            {
+                return BadRequest(new { message = "Agent does not have SSH key configured" });
+            }
+
+            // Default to root directory if not provided
+            var directoryPath = string.IsNullOrWhiteSpace(dir) ? "/" : dir.Trim();
+
+            // Security check: prevent directory traversal attacks
+            if (directoryPath.Contains(".."))
+            {
+                _logger.LogWarning("Potentially unsafe directory path requested: {Path}", directoryPath);
+                return BadRequest(new { message = "Invalid directory path: directory traversal (..) is not allowed" });
+            }
+
+            // Create temporary SSH key file
+            string? tempSshKeyFile = null;
+            try
+            {
+                tempSshKeyFile = CreateTempSshKeyFile(agent.rsyncSshKey);
+
+                // Build SSH command to list files
+                var user = string.IsNullOrWhiteSpace(agent.rsyncUser) ? "" : $"{agent.rsyncUser}@";
+                var sshCommand = $"ls -la --time-style=full-iso \"{directoryPath}\"";
+                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {user}{agent.hostname} {sshCommand}";
+
+                _logger.LogInformation("Executing SSH command: ssh {Args}", sshArgs);
+
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ssh",
+                    Arguments = sshArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Failed to start SSH process");
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("SSH command failed with exit code {ExitCode}: {Error}", process.ExitCode, error);
+                    return StatusCode(500, new { message = $"SSH connection failed: {error}" });
+                }
+
+                // Parse ls -la output
+                var items = ParseLsOutput(output, directoryPath);
+
+                _logger.LogInformation("Browsed directory via SSH: {Path}, {Count} items", directoryPath, items.Count);
+
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error browsing file system via SSH for agent {AgentId}", id);
+                return StatusCode(500, new { message = $"Error browsing file system: {ex.Message}" });
+            }
+            finally
+            {
+                // Clean up temporary SSH key file
+                if (!string.IsNullOrWhiteSpace(tempSshKeyFile) && System.IO.File.Exists(tempSshKeyFile))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(tempSshKeyFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {Path}", tempSshKeyFile);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error browsing file system for agent {AgentId}", id);
+            return StatusCode(500, new { message = "An error occurred while browsing the file system" });
+        }
+    }
+
+    private string CreateTempSshKeyFile(string sshKeyContent)
+    {
+        try
+        {
+            // Create a temporary file for the SSH key
+            var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "remember_ssh_keys");
+            if (!System.IO.Directory.Exists(tempDir))
+            {
+                System.IO.Directory.CreateDirectory(tempDir);
+            }
+
+            var tempKeyFile = System.IO.Path.Combine(tempDir, $"ssh_key_{Guid.NewGuid()}");
+            System.IO.File.WriteAllText(tempKeyFile, sshKeyContent);
+            
+            // Set proper permissions (600) on Unix-like systems
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            {
+                try
+                {
+                    var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        Arguments = $"600 \"{tempKeyFile}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var process = System.Diagnostics.Process.Start(processStartInfo);
+                    process?.WaitForExit();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to set permissions on temporary SSH key file");
+                }
+            }
+
+            return tempKeyFile;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create temporary SSH key file");
+            throw;
+        }
+    }
+
+    private List<FileSystemItem> ParseLsOutput(string output, string basePath)
+    {
+        var items = new List<FileSystemItem>();
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        // Normalize base path
+        var normalizedBasePath = basePath.TrimEnd('/');
+        if (string.IsNullOrEmpty(normalizedBasePath))
+        {
+            normalizedBasePath = "/";
+        }
+
+        foreach (var line in lines)
+        {
+            // Skip total line and empty lines
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("total"))
+            {
+                continue;
+            }
+
+            try
+            {
+                // Parse ls -la output format:
+                // drwxr-xr-x 2 user group 4096 2024-01-01 12:00:00.000000000 +0000 dirname
+                // -rw-r--r-- 1 user group 1024 2024-01-01 12:00:00.000000000 +0000 filename
+                
+                // Split by spaces but preserve the structure
+                var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 9)
+                {
+                    continue;
+                }
+
+                var permissions = parts[0];
+                var type = permissions[0] == 'd' ? "directory" : "file";
+                
+                // The name starts at index 8, but can contain spaces
+                // We need to find where the date/time ends and the name begins
+                // Format: permissions links owner group size month day time/year name
+                // With --time-style=full-iso: permissions links owner group size YYYY-MM-DD HH:MM:SS.nnnnnnnnn +TZ name
+                
+                // Find the index where the name starts (after date/time)
+                // Date format: YYYY-MM-DD HH:MM:SS.nnnnnnnnn +TZ (3 parts) or YYYY-MM-DD HH:MM:SS (2 parts)
+                int nameStartIndex = 8; // Default: after size (index 4) + month (5) + day (6) + time (7) = 8
+                
+                // With --time-style=full-iso, we have: YYYY-MM-DD at index 5, HH:MM:SS.nnnnnnnnn at 6, +TZ at 7
+                // So name starts at index 8
+                // But if the time format is different, we need to adjust
+                if (parts.Length > 8)
+                {
+                    // Check if index 5 looks like a date (YYYY-MM-DD)
+                    if (parts[5].Contains("-") && parts[5].Length == 10)
+                    {
+                        // ISO format: name starts at index 8 (after YYYY-MM-DD HH:MM:SS.nnnnnnnnn +TZ)
+                        nameStartIndex = 8;
+                    }
+                    else
+                    {
+                        // Traditional format: name starts at index 8 (after month day time)
+                        nameStartIndex = 8;
+                    }
+                }
+
+                var name = string.Join(" ", parts.Skip(nameStartIndex)); // Name can contain spaces
+
+                // Skip . and .. entries
+                if (name == "." || name == "..")
+                {
+                    continue;
+                }
+
+                // Parse size (for files)
+                long? size = null;
+                if (type == "file" && long.TryParse(parts[4], out var fileSize))
+                {
+                    size = fileSize;
+                }
+
+                // Parse date/time
+                DateTime lastModified = DateTime.UtcNow;
+                if (parts.Length >= 8)
+                {
+                    // Try to parse ISO format date: 2024-01-01 12:00:00.000000000 +0000
+                    if (parts[5].Contains("-") && parts[5].Length == 10)
+                    {
+                        // ISO format
+                        var dateStr = $"{parts[5]} {parts[6]}";
+                        if (parts.Length > 7 && parts[7].StartsWith("+") || parts[7].StartsWith("-"))
+                        {
+                            dateStr += $" {parts[7]}";
+                        }
+                        if (DateTime.TryParse(dateStr, out var parsedDate))
+                        {
+                            lastModified = parsedDate.ToUniversalTime();
+                        }
+                    }
+                    else
+                    {
+                        // Traditional format: try to parse month day time
+                        // This is more complex, so we'll use current time as fallback
+                    }
+                }
+
+                // Build full path - ensure proper path separators
+                var fullPath = normalizedBasePath == "/" 
+                    ? $"/{name}" 
+                    : $"{normalizedBasePath}/{name}";
+                
+                // Normalize path (remove double slashes)
+                fullPath = fullPath.Replace("//", "/");
+
+                items.Add(new FileSystemItem
+                {
+                    Name = name,
+                    PathName = fullPath,
+                    Path = normalizedBasePath,
+                    Type = type,
+                    Size = size,
+                    LastModified = lastModified,
+                    Permissions = permissions,
+                    Md5 = null // Don't calculate MD5 for browsing (too slow)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error parsing ls output line: {Line}", line);
+            }
+        }
+
+        // Sort: directories first, then files, both alphabetically
+        return items
+            .OrderBy(i => i.Type == "file") // Directories first
+            .ThenBy(i => i.Name)
+            .ToList();
+    }
+
 
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(Agent), StatusCodes.Status200OK)]
@@ -276,6 +758,20 @@ public class AgentController : ControllerBase
             {
                 agent.name = request.Name.Trim();
             }
+            
+            // Update rsync connection details if provided
+            if (request.RsyncUser != null)
+            {
+                agent.rsyncUser = request.RsyncUser.Trim();
+            }
+            if (request.RsyncPort.HasValue)
+            {
+                agent.rsyncPort = request.RsyncPort.Value;
+            }
+            if (request.RsyncSshKey != null)
+            {
+                agent.rsyncSshKey = request.RsyncSshKey.Trim();
+            }
 
             await _context.SaveChangesAsync();
 
@@ -291,129 +787,6 @@ public class AgentController : ControllerBase
         }
     }
 
-    [HttpGet("{id}/browse")]
-    [ProducesResponseType(typeof(List<FileSystemItem>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> BrowseAgentFileSystem(Guid id, [FromQuery] string? dir)
-    {
-        try
-        {
-            var agent = await _context.Agents.FindAsync(id);
-
-            if (agent == null)
-            {
-                return NotFound(new { message = "Agent not found" });
-            }
-
-            if (string.IsNullOrEmpty(agent.token))
-            {
-                return Unauthorized(new { message = "Agent is not authenticated. Please pair the agent first." });
-            }
-
-            // Determine base URL
-            var hostname = agent.hostname;
-            string baseUrl;
-            
-            if (hostname.StartsWith("http://"))
-            {
-                baseUrl = hostname;
-            }
-            else if (hostname.StartsWith("https://"))
-            {
-                baseUrl = hostname;
-            }
-            else
-            {
-                // Try HTTPS first, then HTTP as fallback
-                string[] protocolsToTry = new[] { "https://", "http://" };
-                foreach (var protocol in protocolsToTry)
-                {
-                    var testUrl = $"{protocol}{hostname}/Browse?dir={Uri.EscapeDataString(dir ?? "/")}";
-                    var result = await TryCallBrowseEndpoint(testUrl, agent.token);
-                    if (result.Success && result.Items != null)
-                    {
-                        return Ok(result.Items);
-                    }
-                }
-                return StatusCode(503, new { message = "Failed 1 to connect to agent" });
-            }
-
-            var browseUrl = $"{baseUrl}/Browse?dir={Uri.EscapeDataString(dir ?? "/")}";
-            var response = await TryCallBrowseEndpoint(browseUrl, agent.token);
-            
-            if (!response.Success)
-            {
-                return StatusCode(503, new { message = response.ErrorMessage ?? "Failed to browse agent file system" });
-            }
-
-            return Ok(response.Items ?? new List<FileSystemItem>());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error browsing agent {AgentId} file system", id);
-            return StatusCode(500, new { message = "An error occurred while browsing the file system" });
-        }
-    }
-
-    private async Task<(bool Success, List<FileSystemItem>? Items, string? ErrorMessage)> TryCallBrowseEndpoint(string url, string agentToken)
-    {
-        var httpClientHandler = new HttpClientHandler();
-        httpClientHandler.ServerCertificateCustomValidationCallback = 
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-            {
-                // Accept all certificates (ignore certificate validation)
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromSeconds(30);
-        
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
-        try
-        {
-            _logger.LogInformation("Calling browse endpoint at {Url}", url);
-
-            var response = await httpClient.GetAsync(url);
-
-            if (response.IsSuccessStatusCode)
-            {
-                var items = await response.Content.ReadFromJsonAsync<List<FileSystemItem>>();
-                _logger.LogInformation("Browse endpoint call successful, retrieved {Count} items", items?.Count ?? 0);
-                return (true, items ?? new List<FileSystemItem>(), null);
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}", 
-                    url, response.StatusCode, errorContent);
-                return (false, null, "Authentication failed: Invalid or expired token");
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Browse endpoint call failed: {StatusCode}, {Error}", 
-                    response.StatusCode, errorContent);
-                return (false, null, $"Request failed with status {response.StatusCode}");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Failed to connect to browse endpoint at {Url}", url);
-            return (false, null, $"Cannot reach agent: {ex.Message}");
-        }
-        catch (TaskCanceledException)
-        {
-            _logger.LogError("Timeout while calling browse endpoint at {Url}", url);
-            return (false, null, "Connection timeout");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling browse endpoint at {Url}", url);
-            return (false, null, $"Error: {ex.Message}");
-        }
-    }
 
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -455,301 +828,30 @@ public class AgentController : ControllerBase
         }
     }
 
-    private async Task<(bool Success, string? PingUrl, string? Response, string ErrorMessage)> PingAgent(string hostname)
-    {
-        var pingSuccessful = false;
-        var lastError = "";
-        string? successfulPingUrl = null;
-        string? responseContent = null;
-
-        // Determine ping URL - try HTTPS first, then HTTP if specified or if HTTPS fails
-        string[] protocolsToTry;
-        if (hostname.StartsWith("http://"))
-        {
-            protocolsToTry = new[] { "http://" };
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            protocolsToTry = new[] { "https://" };
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            protocolsToTry = new[] { "https://", "http://" };
-        }
-
-        // Configure HttpClient to accept self-signed certificates (always ignore certificate validation)
-        var httpClientHandler = new HttpClientHandler();
-        httpClientHandler.ServerCertificateCustomValidationCallback = 
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-            {
-                // Accept all certificates (ignore certificate validation)
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromSeconds(5);
-
-        foreach (var protocol in protocolsToTry)
-        {
-            var pingUrl = $"{protocol}{hostname}/Pong";
-            
-            try
-            {
-                _logger.LogInformation("Pinging agent at {PingUrl}", pingUrl);
-
-                var response = await httpClient.GetAsync(pingUrl);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogInformation("Agent ping successful for {Hostname} at {PingUrl}. Response: {Content}", 
-                        hostname, pingUrl, responseContent);
-                    pingSuccessful = true;
-                    successfulPingUrl = pingUrl;
-                    break;
-                }
-                else
-                {
-                    _logger.LogWarning("Agent ping failed with status {StatusCode} for {PingUrl}", 
-                        response.StatusCode, pingUrl);
-                    lastError = $"Status: {response.StatusCode}";
-                }
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogWarning("Failed 2 to connect to agent at {PingUrl}: {Error}", pingUrl, ex.Message);
-                lastError = ex.Message;
-                // Continue to next protocol if available
-            }
-            catch (TaskCanceledException)
-            {
-                _logger.LogWarning("Timeout while pinging agent at {PingUrl}", pingUrl);
-                lastError = "Connection timeout";
-                // Continue to next protocol if available
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Error pinging agent at {PingUrl}: {Error}", pingUrl, ex.Message);
-                lastError = ex.Message;
-                // Continue to next protocol if available
-            }
-        }
-
-        if (!pingSuccessful)
-        {
-            _logger.LogError("Failed to ping agent at {Hostname} after trying all protocols", hostname);
-            return (false, null, null, 
-                $"Cannot reach agent at {hostname}. Please verify the hostname is correct, the agent is running, and the /Pong endpoint is accessible. Error: {lastError}");
-        }
-
-        return (true, successfulPingUrl, responseContent, string.Empty);
-    }
-
-    private async Task<(bool Success, string? Response, string ErrorMessage)> CallAuthenticatedEndpoint(string hostname, string agentToken)
-    {
-        // Determine base URL - try HTTPS first, then HTTP
-        string baseUrl;
-        if (hostname.StartsWith("http://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first, then HTTP as fallback
-            string[] protocolsToTry = new[] { "https://", "http://" };
-            foreach (var protocol in protocolsToTry)
-            {
-                var testUrl = $"{protocol}{hostname}/Backup/status";
-                var result = await TryCallAuthenticatedEndpoint(testUrl, agentToken);
-                if (result.Success)
-                {
-                    return result;
-                }
-            }
-            return (false, null, "Failed to connect to authenticated endpoint");
-        }
-
-        var authUrl = $"{baseUrl}/Backup/status";
-        return await TryCallAuthenticatedEndpoint(authUrl, agentToken);
-    }
-
-    private async Task<(bool Success, string? Response, string ErrorMessage)> TryCallAuthenticatedEndpoint(string url, string agentToken)
-    {
-        // Configure HttpClient to accept self-signed certificates (always ignore certificate validation)
-        var httpClientHandler = new HttpClientHandler();
-        httpClientHandler.ServerCertificateCustomValidationCallback = 
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-            {
-                // Accept all certificates (ignore certificate validation)
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromSeconds(10);
-        
-        // Add the authentication token header
-        httpClient.DefaultRequestHeaders.Add("X-Agent-Token", agentToken);
-
-        try
-        {
-            _logger.LogInformation("Calling authenticated endpoint at {Url}", url);
-
-            var response = await httpClient.GetAsync(url);
-
-            if (response.IsSuccessStatusCode)
-            {
-                var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation("Authenticated endpoint call successful for {Url}. Response: {Content}", 
-                    url, responseContent);
-                return (true, responseContent, string.Empty);
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authentication failed at {Url}: {StatusCode}, {Error}", 
-                    url, response.StatusCode, errorContent);
-                return (false, null, "Authentication failed: Invalid or expired token");
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Authenticated endpoint call failed: {StatusCode}, {Error}", 
-                    response.StatusCode, errorContent);
-                return (false, null, $"Request failed with status {response.StatusCode}");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Failed to connect to authenticated endpoint at {Url}", url);
-            return (false, null, $"Cannot reach authenticated endpoint: {ex.Message}");
-        }
-        catch (TaskCanceledException)
-        {
-            _logger.LogError("Timeout while calling authenticated endpoint at {Url}", url);
-            return (false, null, "Connection timeout");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling authenticated endpoint at {Url}", url);
-            return (false, null, $"Error calling authenticated endpoint: {ex.Message}");
-        }
-    }
-
-    private async Task<(bool Success, string? Token, string ErrorMessage)> VerifyPairingCode(string hostname, string pairingCode)
-    {
-        // Determine base URL - try HTTPS first, then HTTP
-        string baseUrl;
-        if (hostname.StartsWith("http://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(7);
-        }
-        else if (hostname.StartsWith("https://"))
-        {
-            baseUrl = hostname;
-            hostname = hostname.Substring(8);
-        }
-        else
-        {
-            // Try HTTPS first
-            baseUrl = $"https://{hostname}";
-        }
-
-        // Configure HttpClient to accept self-signed certificates (always ignore certificate validation)
-        var httpClientHandler = new HttpClientHandler();
-        httpClientHandler.ServerCertificateCustomValidationCallback = 
-            (HttpRequestMessage message, X509Certificate2? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors) =>
-            {
-                // Accept all certificates (ignore certificate validation)
-                return true;
-            };
-
-        using var httpClient = new HttpClient(httpClientHandler);
-        httpClient.Timeout = TimeSpan.FromSeconds(10);
-
-        try
-        {
-            var verifyUrl = $"{baseUrl}/Pairing/verify";
-            _logger.LogInformation("Verifying pairing code at {VerifyUrl}", verifyUrl);
-
-            var response = await httpClient.PostAsJsonAsync(verifyUrl, new { Code = pairingCode });
-
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<PairingVerifyResponse>();
-                if (result != null && !string.IsNullOrEmpty(result.Token))
-                {
-                    _logger.LogInformation("Pairing code verified successfully for {Hostname}", hostname);
-                    return (true, result.Token, string.Empty);
-                }
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Pairing code verification failed: {StatusCode}, {Error}", response.StatusCode, errorContent);
-                var errorResult = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-                return (false, null, errorResult?.Message ?? $"Verification failed with status {response.StatusCode}");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            string msg = ex.Message;
-            if(ex.InnerException != null)
-                msg += $" - {ex.InnerException.Message}";
-            
-            _logger.LogError(ex, "Failed 5 to connect to agent for pairing verification at {Hostname}. Error: {Error}", hostname, msg);
-            return (false, null, $"Cannot reach agent for pairing verification: {msg}");
-        }
-        catch (TaskCanceledException)
-        {
-            _logger.LogError("Timeout while verifying pairing code at {Hostname}", hostname);
-            return (false, null, "Timeout while verifying pairing code");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error verifying pairing code at {Hostname}", hostname);
-            return (false, null, $"Error verifying pairing code: {ex.Message}");
-        }
-
-        return (false, null, "Failed to verify pairing code");
-    }
-
-    private class PairingVerifyResponse
-    {
-        public string? Token { get; set; }
-        public string? Message { get; set; }
-    }
-
-    private class ErrorResponse
-    {
-        public string? Message { get; set; }
-    }
-
-    public class ReconnectAgentRequest
-    {
-        public string PairingCode { get; set; } = string.Empty;
-    }
-
     public class CreateAgentRequest
     {
         public string Name { get; set; } = string.Empty;
         public string Hostname { get; set; } = string.Empty;
-        public string PairingCode { get; set; } = string.Empty;
+        public string? RsyncUser { get; set; }
+        public int? RsyncPort { get; set; }
+        public string? RsyncSshKey { get; set; }
     }
 
     public class UpdateAgentRequest
     {
         public string Name { get; set; } = string.Empty;
         public string Hostname { get; set; } = string.Empty;
+        public string? RsyncUser { get; set; }
+        public int? RsyncPort { get; set; }
+        public string? RsyncSshKey { get; set; }
+    }
+
+    public class ValidateSshConnectionRequest
+    {
+        public string Hostname { get; set; } = string.Empty;
+        public string? RsyncUser { get; set; }
+        public int RsyncPort { get; set; } = 22;
+        public string? RsyncSshKey { get; set; }
     }
 }
 

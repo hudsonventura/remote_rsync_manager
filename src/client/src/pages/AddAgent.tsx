@@ -3,16 +3,20 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RefreshCw } from "lucide-react"
 import { apiPost } from "@/lib/api"
 
 export function AddAgent() {
   const navigate = useNavigate()
   const [name, setName] = useState("New Agent")
   const [hostname, setHostname] = useState("")
-  const [pairingCode, setPairingCode] = useState("")
+  const [rsyncUser, setRsyncUser] = useState("")
+  const [rsyncPort, setRsyncPort] = useState("22")
+  const [rsyncSshKey, setRsyncSshKey] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -20,7 +24,6 @@ export function AddAgent() {
     setError(null)
     setSuccess(false)
     setIsLoading(true)
-    setIsValidating(true)
 
     try {
       const token = sessionStorage.getItem("token")
@@ -29,22 +32,19 @@ export function AddAgent() {
         return
       }
 
-      if (pairingCode.trim().length !== 6) {
-        setError("Pairing code must be exactly 6 digits")
-        setIsLoading(false)
-        setIsValidating(false)
-        return
-      }
-
       await apiPost("/api/agent", {
         name: name.trim(),
         hostname: hostname.trim(),
-        pairingCode: pairingCode.trim(),
+        rsyncUser: rsyncUser.trim() || null,
+        rsyncPort: rsyncPort ? parseInt(rsyncPort, 10) : null,
+        rsyncSshKey: rsyncSshKey.trim() || null,
       })
       setSuccess(true)
       setName("New Agent")
       setHostname("")
-      setPairingCode("")
+      setRsyncUser("")
+      setRsyncPort("22")
+      setRsyncSshKey("")
       
       // Redirect to agents list after a short delay
       setTimeout(() => {
@@ -58,6 +58,70 @@ export function AddAgent() {
       }
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleValidate = async () => {
+    if (!hostname.trim()) {
+      setError("Hostname is required to validate the connection")
+      setValidationMessage(null)
+      return
+    }
+
+    if (!rsyncSshKey.trim()) {
+      setError("SSH private key is required to validate the connection")
+      setValidationMessage(null)
+      return
+    }
+
+    setIsValidating(true)
+    setValidationMessage(null)
+    setError(null)
+
+    try {
+      const token = sessionStorage.getItem("token")
+      if (!token) {
+        navigate("/login")
+        return
+      }
+
+      const result = await apiPost<{ 
+        message: string; 
+        hostname: string;
+        hasSshKey?: boolean;
+        rsyncUser?: string;
+        rsyncPort?: number;
+      }>(
+        "/api/agent/validate",
+        {
+          hostname: hostname.trim(),
+          rsyncUser: rsyncUser.trim() || null,
+          rsyncPort: rsyncPort ? parseInt(rsyncPort, 10) : 22,
+          rsyncSshKey: rsyncSshKey.trim(),
+        }
+      )
+      
+      setValidationMessage(`✓ ${result.message}`)
+      setError(null)
+    } catch (err: any) {
+      if (err instanceof TypeError && err.message === "Failed to fetch") {
+        setError("Unable to connect to the server. Please make sure the backend is running.")
+      } else {
+        // The apiPost helper already extracts the error message from the response
+        // so err.message should contain the message from the API
+        let errorMessage = "An error occurred during validation"
+        
+        if (err?.message) {
+          errorMessage = err.message
+        } else if (typeof err === 'string') {
+          errorMessage = err
+        }
+        
+        // Format multi-line error messages for better display
+        setError(errorMessage)
+        setValidationMessage(null)
+      }
+    } finally {
       setIsValidating(false)
     }
   }
@@ -67,14 +131,14 @@ export function AddAgent() {
       <div>
         <h1 className="text-3xl font-bold">Add Agent</h1>
         <p className="text-muted-foreground mt-2">
-          Register a new agent by providing its hostname
+          Register a new rsync connection by providing hostname and SSH configuration
         </p>
       </div>
 
       <div className="rounded-lg border bg-card p-6 shadow-sm max-w-2xl">
         <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
-            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive whitespace-pre-line">
               {error}
             </div>
           )}
@@ -82,6 +146,12 @@ export function AddAgent() {
           {success && (
             <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
               Agent created successfully! Redirecting...
+            </div>
+          )}
+
+          {validationMessage && (
+            <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
+              {validationMessage}
             </div>
           )}
 
@@ -94,7 +164,7 @@ export function AddAgent() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
@@ -111,43 +181,82 @@ export function AddAgent() {
               value={hostname}
               onChange={(e) => setHostname(e.target.value)}
               required
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
               className="max-w-md"
             />
             <p className="text-sm text-muted-foreground">
-              Enter the hostname or address of the agent
+              Enter the hostname or IP address of the remote server for rsync connections
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="pairingCode">Pairing Code *</Label>
+            <Label htmlFor="rsyncUser">Rsync/SSH User</Label>
             <Input
-              id="pairingCode"
+              id="rsyncUser"
               type="text"
-              placeholder="123456"
-              value={pairingCode}
-              onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              required
-              disabled={isLoading}
+              placeholder="username"
+              value={rsyncUser}
+              onChange={(e) => setRsyncUser(e.target.value)}
+              disabled={isLoading || isValidating}
               className="max-w-md"
-              maxLength={6}
-              minLength={6}
             />
             <p className="text-sm text-muted-foreground">
-              Enter the 6-digit pairing code displayed in the agent's console. 
-              This code is required to pair the agent and generate an authentication token.
+              SSH username for rsync connections (optional)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rsyncPort">Rsync/SSH Port</Label>
+            <Input
+              id="rsyncPort"
+              type="number"
+              placeholder="22"
+              value={rsyncPort}
+              onChange={(e) => setRsyncPort(e.target.value)}
+              disabled={isLoading || isValidating}
+              className="max-w-md"
+              min="1"
+              max="65535"
+            />
+            <p className="text-sm text-muted-foreground">
+              SSH port for rsync connections (default: 22)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rsyncSshKey">SSH Private Key</Label>
+            <textarea
+              id="rsyncSshKey"
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+              value={rsyncSshKey}
+              onChange={(e) => setRsyncSshKey(e.target.value)}
+              disabled={isLoading || isValidating}
+              rows={6}
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs max-w-md"
+            />
+            <p className="text-sm text-muted-foreground">
+              Paste your SSH private key content here (optional). The key will be stored securely and used for rsync authentication.
             </p>
           </div>
 
           <div className="flex gap-4">
-            <Button type="submit" disabled={isLoading}>
-              {isValidating ? "Validating agent..." : isLoading ? "Creating..." : "Create Agent"}
+            <Button type="submit" disabled={isLoading || isValidating}>
+              {isLoading ? "Creating..." : "Create Agent"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleValidate}
+              disabled={isLoading || isValidating}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
+              {isValidating ? "Validating..." : "Validate Connection"}
             </Button>
             <Button
               type="button"
               variant="outline"
               onClick={() => navigate("/")}
-              disabled={isLoading}
+              disabled={isLoading || isValidating}
             >
               Cancel
             </Button>

@@ -12,5 +12,7 @@ public class BackupExecution
     public DateTime? endDateTime { get; set; }
     public string? currentFileName { get; set; }
     public string? currentFilePath { get; set; }
+    public int? totalFilesToProcess { get; set; }
+    public int currentFileIndex { get; set; }
 }
 

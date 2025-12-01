@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, RefreshCw, Trash2, Copy, Check } from "lucide-react"
+import { ArrowLeft, RefreshCw, Trash2, Copy } from "lucide-react"
 import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api"
 import {
   AlertDialog,
@@ -21,7 +21,9 @@ interface Agent {
   id: string
   name: string
   hostname: string
-  token?: string | null
+  rsyncUser?: string | null
+  rsyncPort?: number
+  rsyncSshKey?: string | null
 }
 
 export function EditAgent() {
@@ -29,15 +31,14 @@ export function EditAgent() {
   const { id } = useParams()
   const [name, setName] = useState("")
   const [hostname, setHostname] = useState("")
+  const [rsyncUser, setRsyncUser] = useState("")
+  const [rsyncPort, setRsyncPort] = useState("22")
+  const [rsyncSshKey, setRsyncSshKey] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
-  const [agentToken, setAgentToken] = useState<string | null>(null)
-  const [tokenCopied, setTokenCopied] = useState(false)
-  const [pairingCode, setPairingCode] = useState("")
-  const [isReconnecting, setIsReconnecting] = useState(false)
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -60,7 +61,9 @@ export function EditAgent() {
         const agentData: Agent = await apiGet<Agent>(`/api/agent/${id}`)
         setName(agentData.name)
         setHostname(agentData.hostname)
-        setAgentToken(agentData.token || null)
+        setRsyncUser(agentData.rsyncUser || "")
+        setRsyncPort(agentData.rsyncPort?.toString() || "22")
+        setRsyncSshKey(agentData.rsyncSshKey || "")
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred")
       } finally {
@@ -92,6 +95,9 @@ export function EditAgent() {
         await apiPut(`/api/agent/${id}`, {
           name: name.trim(),
           hostname: hostname.trim(),
+          rsyncUser: rsyncUser.trim() || null,
+          rsyncPort: rsyncPort ? parseInt(rsyncPort, 10) : null,
+          rsyncSshKey: rsyncSshKey.trim() || null,
         })
 
       // Redirect back to agents list
@@ -126,37 +132,31 @@ export function EditAgent() {
 
       const result = await apiPost<{ 
         message: string; 
-        hostname: string; 
-        pingUrl?: string; 
-        response?: string;
-        authenticated?: boolean;
-        authResponse?: string;
+        hostname: string;
+        hasSshKey?: boolean;
+        rsyncUser?: string;
+        rsyncPort?: number;
       }>(
         `/api/agent/${id}/validate`
       )
       
-      if (result.authenticated === true) {
-        setValidationMessage(`✓ ${result.message}`)
-        setError(null)
-      } else if (result.authenticated === false) {
-        setError(result.message)
-        setValidationMessage(null)
-      } else {
-        // Agent is reachable but not authenticated (no token stored)
-        setValidationMessage(result.message)
-        setError(null)
-      }
+      setValidationMessage(`✓ ${result.message}`)
+      setError(null)
     } catch (err: any) {
       if (err instanceof TypeError && err.message === "Failed to fetch") {
         setError("Unable to connect to the server. Please make sure the backend is running.")
       } else {
-        // Try to extract error message from response
+        // The apiPost helper already extracts the error message from the response
+        // so err.message should contain the message from the API
         let errorMessage = "An error occurred during validation"
+        
         if (err?.message) {
           errorMessage = err.message
         } else if (typeof err === 'string') {
           errorMessage = err
         }
+        
+        // Format multi-line error messages for better display
         setError(errorMessage)
         setValidationMessage(null)
       }
@@ -190,64 +190,6 @@ export function EditAgent() {
     }
   }
 
-  const handleCopyToken = async () => {
-    if (agentToken) {
-      try {
-        await navigator.clipboard.writeText(agentToken)
-        setTokenCopied(true)
-        setTimeout(() => setTokenCopied(false), 2000)
-      } catch (err) {
-        setError("Failed to copy token to clipboard")
-      }
-    }
-  }
-
-  const handleReconnect = async () => {
-    if (!id) {
-      setError("Agent ID is required")
-      return
-    }
-
-    if (pairingCode.trim().length !== 6) {
-      setError("Pairing code must be exactly 6 digits")
-      return
-    }
-
-    setIsReconnecting(true)
-    setError(null)
-    setValidationMessage(null)
-
-    try {
-      const token = sessionStorage.getItem("token")
-      if (!token) {
-        navigate("/login")
-        return
-      }
-
-      const updatedAgent: Agent = await apiPost<Agent>(`/api/agent/${id}/reconnect`, {
-        pairingCode: pairingCode.trim(),
-      })
-
-      setAgentToken(updatedAgent.token || null)
-      setPairingCode("")
-      setValidationMessage("✓ Agent reconnected successfully! New token has been saved.")
-      setError(null)
-    } catch (err: any) {
-      if (err instanceof TypeError && err.message === "Failed to fetch") {
-        setError("Unable to connect to the server. Please make sure the backend is running.")
-      } else {
-        let errorMessage = "Failed to reconnect agent"
-        if (err?.message) {
-          errorMessage = err.message
-        } else if (typeof err === 'string') {
-          errorMessage = err
-        }
-        setError(errorMessage)
-      }
-    } finally {
-      setIsReconnecting(false)
-    }
-  }
 
   if (isLoadingData) {
     return (
@@ -276,14 +218,14 @@ export function EditAgent() {
           <div>
             <h1 className="text-3xl font-bold">Edit Agent</h1>
             <p className="text-muted-foreground mt-2">
-              Update the agent name and hostname
+              Update the agent name, hostname, and rsync/SSH connection details
             </p>
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive whitespace-pre-line">
           {error}
         </div>
       )}
@@ -329,67 +271,79 @@ export function EditAgent() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="token">Agent Token</Label>
-            <div className="flex gap-2">
-              <Input
-                id="token"
-                type="text"
-                value={agentToken || "(no token - agent not paired)"}
-                readOnly
-                disabled
-                className="font-mono text-sm"
-              />
-              {agentToken && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={handleCopyToken}
-                  title="Copy token to clipboard"
-                >
-                  {tokenCopied ? (
-                    <Check className="h-4 w-4 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              )}
-            </div>
+            <Label htmlFor="rsyncUser">Rsync/SSH User</Label>
+            <Input
+              id="rsyncUser"
+              type="text"
+              placeholder="username"
+              value={rsyncUser}
+              onChange={(e) => setRsyncUser(e.target.value)}
+              disabled={isLoading}
+            />
             <p className="text-sm text-muted-foreground">
-              The authentication token used to communicate with this agent. This token is sent in the X-Agent-Token header.
+              SSH username for rsync connections (optional)
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="pairingCode">Reconnect with Pairing Code</Label>
-            <div className="flex gap-2">
-              <Input
-                id="pairingCode"
-                type="text"
-                placeholder="123456"
-                value={pairingCode}
-                onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                disabled={isReconnecting || isLoading || isValidating}
-                className="max-w-md"
-                maxLength={6}
-                minLength={6}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleReconnect}
-                disabled={isReconnecting || isLoading || isValidating || pairingCode.trim().length !== 6}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isReconnecting ? "animate-spin" : ""}`} />
-                {isReconnecting ? "Reconnecting..." : "Reconnect"}
-              </Button>
-            </div>
+            <Label htmlFor="rsyncPort">Rsync/SSH Port</Label>
+            <Input
+              id="rsyncPort"
+              type="number"
+              placeholder="22"
+              value={rsyncPort}
+              onChange={(e) => setRsyncPort(e.target.value)}
+              disabled={isLoading}
+              min="1"
+              max="65535"
+            />
             <p className="text-sm text-muted-foreground">
-              Enter the 6-digit pairing code displayed in the agent's console to reconnect and generate a new authentication token.
+              SSH port for rsync connections (default: 22)
             </p>
           </div>
 
-              <div className="flex gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="rsyncSshKey">SSH Private Key</Label>
+              {rsyncSshKey && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const textarea = document.getElementById("rsyncSshKey") as HTMLTextAreaElement;
+                    if (textarea) {
+                      textarea.select();
+                      navigator.clipboard.writeText(rsyncSshKey);
+                    }
+                  }}
+                  className="text-xs"
+                >
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copy
+                </Button>
+              )}
+            </div>
+            <textarea
+              id="rsyncSshKey"
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+              value={rsyncSshKey}
+              onChange={(e) => setRsyncSshKey(e.target.value)}
+              disabled={isLoading}
+              rows={6}
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs"
+            />
+            <p className="text-sm text-muted-foreground">
+              Paste your SSH private key content here (optional). The key will be stored securely and used for rsync authentication.
+            </p>
+            {rsyncSshKey && (
+              <p className="text-xs text-muted-foreground">
+                Key length: {rsyncSshKey.length} characters
+              </p>
+            )}
+          </div>
+
+          <div className="flex gap-4">
                 <Button type="submit" disabled={isLoading || isValidating}>
                   {isLoading ? "Saving..." : "Save Changes"}
                 </Button>
