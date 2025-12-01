@@ -124,7 +124,7 @@ export function LoginForm() {
       <div className="flex flex-col items-center gap-2 text-center">
         <img 
           src="/icon.png" 
-          alt="Remember Backup System" 
+          alt="Remote Rsync Manager" 
           className="h-128 w-128 mb-2"
         />
         <h1 className="text-2xl font-bold">Login</h1>

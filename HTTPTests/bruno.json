@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "name": "Remember",
+  "name": "Remote Rsync Manager",
   "type": "collection",
   "ignore": [
     "node_modules",

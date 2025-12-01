@@ -50,7 +50,7 @@ export function Sidebar() {
             alt="Remember" 
             className="h-14 w-16"
           />
-          <h2 className="text-lg font-semibold">Remember Backup System</h2>
+          <h2 className="text-lg font-semibold">Remote Rsync Manager</h2>
         </div>
       </div>
     )
@@ -64,7 +64,7 @@ export function Sidebar() {
           alt="Remember" 
           className="h-14 w-16"
         />
-        <h2 className="text-lg font-semibold">Remember Backup System</h2>
+        <h2 className="text-lg font-semibold">Remote Rsync Manager</h2>
       </div>
       <nav className="flex-1 space-y-1 p-4">
         {navigation.map((item) => {

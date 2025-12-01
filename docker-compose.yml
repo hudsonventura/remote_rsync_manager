@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: remember-server
+    container_name: rsync-manager-server
     ports:
       - "5001:5001"
     environment:

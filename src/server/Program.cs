@@ -260,7 +260,7 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
         {
             id = Guid.NewGuid(),
             username = "admin",
-            email = "admin@remember.local",
+            email = "admin@rsync-manager.local",
             passwordHash = adminPasswordHash,
             isAdmin = true,
             isActive = true,

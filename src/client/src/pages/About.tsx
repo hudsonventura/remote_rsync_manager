@@ -126,7 +126,7 @@ export function About() {
           <div>
             <h2 className="text-xl font-semibold mb-2">Developer</h2>
             <p className="text-muted-foreground mb-4">
-              Remember Backup System is developed and maintained by Hudson Ventura
+              Remote Rsync Manager is developed and maintained by Hudson Ventura
             </p>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <FileText className="h-4 w-4" />

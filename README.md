@@ -39,7 +39,7 @@ cd remote_rsync_manager &&
 sudo docker compose up -d
 ```
 
-or copy the content of `docker-compose.yml`, from [here](https://github.com/hudsonventura/remeber/blob/main/docker-compose.yml), on your computer and run:
+or copy the content of `docker-compose.yml`, from [here](https://github.com/hudsonventura/remote_rsync_manager/blob/main/docker-compose.yml), on your computer and run:
 ```bash
 sudo docker-compose up -d
 ```
