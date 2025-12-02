@@ -40,6 +40,7 @@ builder.Services.AddOpenApi();
 
 // Ensure data directory exists
 var dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "data");
+Console.WriteLine($"Data directory: {dataDirectory}");
 if (!Directory.Exists(dataDirectory))
 {
     Directory.CreateDirectory(dataDirectory);
@@ -116,7 +117,9 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
     // Apply pending migrations
     try
     {
+        Console.WriteLine("Migrating database...");
         dbContext.Database.Migrate();
+        Console.WriteLine("Database migrated successfully.");
     }
     catch (Exception ex)
     {
@@ -141,8 +144,9 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
         var password = Convert.ToBase64String(randomBytes);
 
         // Generate certificate path
+        Console.WriteLine($"Generating certificate path: {dataDirectory}");
         var certPath = Path.Combine(dataDirectory, "server.pfx");
-
+        Console.WriteLine($"Certificate path: {certPath}");
         certConfig = new CertificateConfig
         {
             certificatePath = certPath,
@@ -169,7 +173,7 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to generate certificate: {ex.Message}");
+            Console.WriteLine($"Failed to generate certificate at {certConfig.certificatePath}: {ex.Message}");
             throw;
         }
     }
@@ -197,6 +201,7 @@ using (var logContext = new LogDbContext(new DbContextOptionsBuilder<LogDbContex
 {
     try
     {
+        Console.WriteLine("Migrating log database...");
         logContext.Database.Migrate();
         Console.WriteLine("Log database migrations applied successfully.");
     }
