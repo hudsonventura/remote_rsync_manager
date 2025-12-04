@@ -27,6 +27,8 @@ interface TelegramConfigResponse {
   isEnabled: boolean
   botToken: string
   webhookUrl: string
+  notificationsEnabled: boolean
+  notificationChatId: string
 }
 
 function formatBytes(bytes: number): string {

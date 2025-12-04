@@ -37,7 +37,9 @@ public class TelegramController : ControllerBase
                 {
                     IsEnabled = false,
                     BotToken = string.Empty,
-                    WebhookUrl = string.Empty
+                    WebhookUrl = string.Empty,
+                    NotificationsEnabled = false,
+                    NotificationChatId = string.Empty
                 });
             }
 
@@ -45,7 +47,9 @@ public class TelegramController : ControllerBase
             {
                 IsEnabled = config.isEnabled,
                 BotToken = config.botToken,
-                WebhookUrl = config.webhookUrl
+                WebhookUrl = config.webhookUrl,
+                NotificationsEnabled = config.notificationsEnabled,
+                NotificationChatId = config.notificationChatId
             });
         }
         catch (Exception ex)
@@ -69,6 +73,8 @@ public class TelegramController : ControllerBase
                     botToken = request.BotToken,
                     webhookUrl = request.WebhookUrl ?? string.Empty,
                     isEnabled = request.IsEnabled,
+                    notificationsEnabled = request.NotificationsEnabled,
+                    notificationChatId = request.NotificationChatId ?? string.Empty,
                     created_at = DateTime.UtcNow,
                     updated_at = DateTime.UtcNow
                 };
@@ -79,6 +85,8 @@ public class TelegramController : ControllerBase
                 config.botToken = request.BotToken;
                 config.webhookUrl = request.WebhookUrl ?? string.Empty;
                 config.isEnabled = request.IsEnabled;
+                config.notificationsEnabled = request.NotificationsEnabled;
+                config.notificationChatId = request.NotificationChatId ?? string.Empty;
                 config.updated_at = DateTime.UtcNow;
             }
 
@@ -186,6 +194,8 @@ public class TelegramConfigResponse
     public bool IsEnabled { get; set; }
     public string BotToken { get; set; } = string.Empty;
     public string WebhookUrl { get; set; } = string.Empty;
+    public bool NotificationsEnabled { get; set; }
+    public string NotificationChatId { get; set; } = string.Empty;
 }
 
 public class SaveTelegramConfigRequest
@@ -193,6 +203,8 @@ public class SaveTelegramConfigRequest
     public string BotToken { get; set; } = string.Empty;
     public string? WebhookUrl { get; set; }
     public bool IsEnabled { get; set; }
+    public bool NotificationsEnabled { get; set; }
+    public string? NotificationChatId { get; set; }
 }
 
 public class TestTelegramRequest
