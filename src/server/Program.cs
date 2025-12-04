@@ -311,10 +311,12 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddSingleton<ITokenStore, TokenStore>();
 builder.Services.AddScoped<BackupPlanExecutor>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<ITelegramService, TelegramService>();
 
 // Register hosted services
 builder.Services.AddHostedService<BackupRunner>();
 builder.Services.AddHostedService<LogRetentionService>();
+builder.Services.AddHostedService<TelegramHostedService>();
 
 var app = builder.Build();
 

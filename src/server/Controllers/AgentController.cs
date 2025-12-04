@@ -18,7 +18,7 @@ public class AgentController : ControllerBase
     private readonly ILogger<AgentController> _logger;
     private readonly IWebHostEnvironment _environment;
 
-    public AgentController(DBContext context, ILogger<AgentController> logger, IWebHostEnvironment environment)
+    public AgentController(server.Data.DBContext context, ILogger<AgentController> logger, IWebHostEnvironment environment)
     {
         _context = context;
         _logger = logger;

@@ -57,6 +57,13 @@ export default {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+      },
+      boxShadow: {
+        'corporate': '0 2px 8px rgba(0, 0, 0, 0.08)',
+        'corporate-lg': '0 4px 16px rgba(0, 0, 0, 0.12)',
+      },
       keyframes: {
         "accordion-down": {
           from: { height: "0" },

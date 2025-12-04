@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Trash2, Save, AlertCircle } from "lucide-react"
+import { Trash2, Save, AlertCircle, Send } from "lucide-react"
 import { apiGet, apiPost } from "@/lib/api"
+import { Switch } from "@/components/ui/switch"
 
 interface LogRetentionDateResponse {
   date: string | null
@@ -20,6 +21,12 @@ interface DeleteLogsResponse {
   notificationsDeleted: number
   spaceSavedBytes: number
   message: string
+}
+
+interface TelegramConfigResponse {
+  isEnabled: boolean
+  botToken: string
+  webhookUrl: string
 }
 
 function formatBytes(bytes: number): string {
@@ -42,6 +49,15 @@ export function Settings() {
   const [success, setSuccess] = useState<string | null>(null)
   const [deleteResult, setDeleteResult] = useState<DeleteLogsResponse | null>(null)
 
+  const [telegramEnabled, setTelegramEnabled] = useState(false)
+  const [telegramBotToken, setTelegramBotToken] = useState("")
+  const [telegramWebhookUrl, setTelegramWebhookUrl] = useState("")
+  const [telegramChatId, setTelegramChatId] = useState("")
+  const [isSavingTelegram, setIsSavingTelegram] = useState(false)
+  const [isTestingTelegram, setIsTestingTelegram] = useState(false)
+  const [telegramError, setTelegramError] = useState<string | null>(null)
+  const [telegramSuccess, setTelegramSuccess] = useState<string | null>(null)
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -51,9 +67,10 @@ export function Settings() {
           return
         }
 
-        const [dateResponse, periodResponse] = await Promise.all([
+        const [dateResponse, periodResponse, telegramResponse] = await Promise.all([
           apiGet<LogRetentionDateResponse>("/api/settings/log-retention-date"),
-          apiGet<LogRetentionPeriodResponse>("/api/settings/log-retention-period")
+          apiGet<LogRetentionPeriodResponse>("/api/settings/log-retention-period"),
+          apiGet<TelegramConfigResponse>("/api/telegram/config")
         ])
 
         if (dateResponse.date) {
@@ -65,8 +82,12 @@ export function Settings() {
         if (periodResponse.months !== null && periodResponse.months !== undefined) {
           setLogRetentionMonths(periodResponse.months.toString())
         }
+
+        setTelegramEnabled(telegramResponse.isEnabled)
+        setTelegramBotToken(telegramResponse.botToken)
+        setTelegramWebhookUrl(telegramResponse.webhookUrl)
       } catch (err) {
-        console.error("Error fetching log retention settings:", err)
+        console.error("Error fetching settings:", err)
       }
     }
 
@@ -127,6 +148,49 @@ export function Settings() {
       setError(err instanceof Error ? err.message : "Failed to delete logs")
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  const handleSaveTelegram = async () => {
+    setIsSavingTelegram(true)
+    setTelegramError(null)
+    setTelegramSuccess(null)
+
+    try {
+      await apiPost("/api/telegram/config", {
+        botToken: telegramBotToken,
+        webhookUrl: telegramWebhookUrl,
+        isEnabled: telegramEnabled
+      })
+
+      setTelegramSuccess("Telegram configuration saved successfully")
+    } catch (err) {
+      setTelegramError(err instanceof Error ? err.message : "Failed to save Telegram configuration")
+    } finally {
+      setIsSavingTelegram(false)
+    }
+  }
+
+  const handleTestTelegram = async () => {
+    if (!telegramChatId) {
+      setTelegramError("Please enter your Chat ID")
+      return
+    }
+
+    setIsTestingTelegram(true)
+    setTelegramError(null)
+    setTelegramSuccess(null)
+
+    try {
+      await apiPost("/api/telegram/test", {
+        chatId: parseInt(telegramChatId)
+      })
+
+      setTelegramSuccess("Test message sent successfully! Check your Telegram.")
+    } catch (err) {
+      setTelegramError(err instanceof Error ? err.message : "Failed to send test message")
+    } finally {
+      setIsTestingTelegram(false)
     }
   }
 
@@ -270,6 +334,115 @@ export function Settings() {
                 </div>
                 <input type="checkbox" className="h-4 w-4" defaultChecked />
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Telegram Integration Settings */}
+      <div className="rounded-lg border bg-card p-6 shadow-sm shadow-corporate">
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-lg font-semibold mb-2">Telegram Integration</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Configure Telegram bot for notifications and alerts
+            </p>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium">Enable Telegram Bot</label>
+                  <p className="text-sm text-muted-foreground">
+                    Activate Telegram notifications
+                  </p>
+                </div>
+                <Switch
+                  checked={telegramEnabled}
+                  onCheckedChange={setTelegramEnabled}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="telegram-bot-token">Bot Token</Label>
+                <Input
+                  id="telegram-bot-token"
+                  type="password"
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value)}
+                  placeholder="Enter your Telegram bot token"
+                  disabled={!telegramEnabled}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Get your bot token from <a href="https://t.me/botfather" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">@BotFather</a> on Telegram
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="telegram-webhook-url">Webhook URL (Optional)</Label>
+                <Input
+                  id="telegram-webhook-url"
+                  type="text"
+                  value={telegramWebhookUrl}
+                  onChange={(e) => setTelegramWebhookUrl(e.target.value)}
+                  placeholder="https://yourdomain.com/api/telegram/webhook"
+                  disabled={!telegramEnabled}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave empty for polling mode. Set for production webhook mode.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <Button
+                  onClick={handleSaveTelegram}
+                  disabled={isSavingTelegram || !telegramEnabled}
+                  variant="default"
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {isSavingTelegram ? "Saving..." : "Save Configuration"}
+                </Button>
+              </div>
+
+              <div className="border-t pt-4 mt-4">
+                <h4 className="text-sm font-semibold mb-2">Test Connection</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Send a test message to verify your bot is working. Start a chat with your bot and use /chatid to get your Chat ID.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="telegram-chat-id">Your Chat ID</Label>
+                  <Input
+                    id="telegram-chat-id"
+                    type="text"
+                    value={telegramChatId}
+                    onChange={(e) => setTelegramChatId(e.target.value)}
+                    placeholder="Enter your Telegram Chat ID"
+                    disabled={!telegramEnabled}
+                  />
+                </div>
+                <div className="flex items-center gap-4 mt-3">
+                  <Button
+                    onClick={handleTestTelegram}
+                    disabled={isTestingTelegram || !telegramEnabled || !telegramChatId}
+                    variant="secondary"
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    {isTestingTelegram ? "Sending..." : "Send Test Message"}
+                  </Button>
+                </div>
+              </div>
+
+              {telegramError && (
+                <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  {telegramError}
+                </div>
+              )}
+
+              {telegramSuccess && (
+                <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
+                  {telegramSuccess}
+                </div>
+              )}
             </div>
           </div>
         </div>

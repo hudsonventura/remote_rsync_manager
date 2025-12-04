@@ -40,6 +40,7 @@ public class DBContext : DbContext
     public DbSet<AppSettings> AppSettings { get; set; } = null!;
     public DbSet<Notification> Notifications { get; set; } = null!;
     public DbSet<User> Users { get; set; } = null!;
+    public DbSet<TelegramConfig> TelegramConfigs { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -99,10 +100,20 @@ public class DBContext : DbContext
             entity.Property(e => e.createdAt).IsRequired();
             entity.Property(e => e.timezone).HasMaxLength(100);
             entity.Property(e => e.theme).HasMaxLength(50);
-            
+
             // Create unique index on username and email
             entity.HasIndex(e => e.username).IsUnique();
             entity.HasIndex(e => e.email).IsUnique();
+        });
+
+        modelBuilder.Entity<TelegramConfig>(entity =>
+        {
+            entity.HasKey(e => e.id);
+            entity.Property(e => e.botToken).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.webhookUrl).HasMaxLength(500);
+            entity.Property(e => e.isEnabled).IsRequired();
+            entity.Property(e => e.created_at).IsRequired();
+            entity.Property(e => e.updated_at).IsRequired();
         });
     }
 }
