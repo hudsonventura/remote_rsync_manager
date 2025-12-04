@@ -46,9 +46,46 @@ public class BackupPlanExecutor
 
         try
         {
-            // Write SSH key to temporary file
-            await File.WriteAllTextAsync(sshKeyPath, agent.rsyncSshKey);
+            // Normalize SSH key content: convert CRLF to LF, trim whitespace, ensure it ends with newline
+            var normalizedKey = NormalizeSshKeyContent(agent.rsyncSshKey);
+            
+            // Write SSH key to temporary file with UTF-8 encoding without BOM
+            await File.WriteAllTextAsync(sshKeyPath, normalizedKey, new System.Text.UTF8Encoding(false));
+            
+            // Set correct permissions (600) for SSH private key
+            // SSH requires private keys to have permissions 600 (read/write for owner only)
             File.SetUnixFileMode(sshKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            
+            // Also use chmod command as a fallback to ensure permissions are correct
+            try
+            {
+                var chmodProcessInfo = new ProcessStartInfo
+                {
+                    FileName = "/bin/chmod",
+                    Arguments = $"600 {sshKeyPath}",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                
+                using (var chmodProcess = Process.Start(chmodProcessInfo))
+                {
+                    if (chmodProcess != null)
+                    {
+                        await chmodProcess.WaitForExitAsync();
+                        if (chmodProcess.ExitCode != 0)
+                        {
+                            var chmodError = await chmodProcess.StandardError.ReadToEndAsync();
+                            _logger.LogWarning("chmod command exited with code {ExitCode}: {Error}", chmodProcess.ExitCode, chmodError);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to execute chmod on SSH key file, but continuing with SetUnixFileMode permissions");
+            }
 
             var startTime = DateTime.UtcNow;
             Guid executionId = Guid.NewGuid();
@@ -467,6 +504,31 @@ public class BackupPlanExecutor
                 _logger.LogWarning(ex, "Failed to delete temporary SSH key file: {SshKeyPath}", sshKeyPath);
             }
         }
+    }
+
+    private string NormalizeSshKeyContent(string sshKeyContent)
+    {
+        if (string.IsNullOrWhiteSpace(sshKeyContent))
+        {
+            return sshKeyContent;
+        }
+        
+        // Trim leading and trailing whitespace
+        var normalized = sshKeyContent.Trim();
+        
+        // Replace Windows line endings (CRLF) with Unix line endings (LF)
+        normalized = normalized.Replace("\r\n", "\n");
+        
+        // Replace any remaining carriage returns with newlines
+        normalized = normalized.Replace("\r", "\n");
+        
+        // Ensure the key ends with a newline (SSH keys typically should)
+        if (!normalized.EndsWith("\n"))
+        {
+            normalized += "\n";
+        }
+        
+        return normalized;
     }
 
     private async Task<int> RunDryRunAndCountFiles(BackupPlan backupPlan, Agent agent, string sshKeyPath, Guid executionId)

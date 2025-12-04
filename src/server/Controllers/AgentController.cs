@@ -549,6 +549,31 @@ public class AgentController : ControllerBase
         }
     }
 
+    private string NormalizeSshKeyContent(string sshKeyContent)
+    {
+        if (string.IsNullOrWhiteSpace(sshKeyContent))
+        {
+            return sshKeyContent;
+        }
+        
+        // Trim leading and trailing whitespace
+        var normalized = sshKeyContent.Trim();
+        
+        // Replace Windows line endings (CRLF) with Unix line endings (LF)
+        normalized = normalized.Replace("\r\n", "\n");
+        
+        // Replace any remaining carriage returns with newlines
+        normalized = normalized.Replace("\r", "\n");
+        
+        // Ensure the key ends with a newline (SSH keys typically should)
+        if (!normalized.EndsWith("\n"))
+        {
+            normalized += "\n";
+        }
+        
+        return normalized;
+    }
+
     private string CreateTempSshKeyFile(string sshKeyContent)
     {
         try
@@ -561,7 +586,12 @@ public class AgentController : ControllerBase
             }
 
             var tempKeyFile = System.IO.Path.Combine(tempDir, $"ssh_key_{Guid.NewGuid()}");
-            System.IO.File.WriteAllText(tempKeyFile, sshKeyContent);
+            
+            // Normalize SSH key content: convert CRLF to LF, trim whitespace, ensure it ends with newline
+            var normalizedKey = NormalizeSshKeyContent(sshKeyContent);
+            
+            // Write with UTF-8 encoding without BOM
+            System.IO.File.WriteAllText(tempKeyFile, normalizedKey, new System.Text.UTF8Encoding(false));
             
             // Set proper permissions (600) on Unix-like systems
             if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
