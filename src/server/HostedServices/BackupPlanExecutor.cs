@@ -44,6 +44,12 @@ public class BackupPlanExecutor
         var sshKeyPath = Path.Combine(Path.GetTempPath(), $"ssh_key_{Guid.NewGuid()}");
         var result = new ExecutionResult();
 
+        using (var scope = _serviceScopeFactory.CreateScope())
+        {
+            var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+            await notificationService.SendBackupStartNotificationAsync(backupPlan, isAutomatic, isSimulation);
+        }
+
         try
         {
             // Normalize SSH key content: convert CRLF to LF, trim whitespace, ensure it ends with newline
@@ -487,7 +493,22 @@ public class BackupPlanExecutor
                 _logger.LogInformation("Backup completed successfully for backup plan {BackupPlanId}", backupPlan.id);
             }
 
+            using (var scope = _serviceScopeFactory.CreateScope())
+            {
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendBackupCompletedNotificationAsync(backupPlan, result, isAutomatic, isSimulation);
+            }
+
             return result;
+        }
+        catch (Exception ex)
+        {
+            using (var scope = _serviceScopeFactory.CreateScope())
+            {
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendBackupFailedNotificationAsync(backupPlan, ex.Message, isAutomatic, isSimulation);
+            }
+            throw;
         }
         finally
         {

@@ -52,6 +52,8 @@ export function Settings() {
   const [telegramEnabled, setTelegramEnabled] = useState(false)
   const [telegramBotToken, setTelegramBotToken] = useState("")
   const [telegramWebhookUrl, setTelegramWebhookUrl] = useState("")
+  const [telegramNotificationsEnabled, setTelegramNotificationsEnabled] = useState(false)
+  const [telegramNotificationChatId, setTelegramNotificationChatId] = useState("")
   const [telegramChatId, setTelegramChatId] = useState("")
   const [isSavingTelegram, setIsSavingTelegram] = useState(false)
   const [isTestingTelegram, setIsTestingTelegram] = useState(false)
@@ -86,6 +88,8 @@ export function Settings() {
         setTelegramEnabled(telegramResponse.isEnabled)
         setTelegramBotToken(telegramResponse.botToken)
         setTelegramWebhookUrl(telegramResponse.webhookUrl)
+        setTelegramNotificationsEnabled(telegramResponse.notificationsEnabled)
+        setTelegramNotificationChatId(telegramResponse.notificationChatId)
       } catch (err) {
         console.error("Error fetching settings:", err)
       }
@@ -160,7 +164,9 @@ export function Settings() {
       await apiPost("/api/telegram/config", {
         botToken: telegramBotToken,
         webhookUrl: telegramWebhookUrl,
-        isEnabled: telegramEnabled
+        isEnabled: telegramEnabled,
+        notificationsEnabled: telegramNotificationsEnabled,
+        notificationChatId: telegramNotificationChatId
       })
 
       setTelegramSuccess("Telegram configuration saved successfully")
@@ -401,6 +407,44 @@ export function Settings() {
                   <Save className="h-4 w-4 mr-2" />
                   {isSavingTelegram ? "Saving..." : "Save Configuration"}
                 </Button>
+              </div>
+
+              <div className="border-t pt-4 mt-4">
+                <h4 className="text-sm font-semibold mb-3">Backup Notifications</h4>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Receive Telegram notifications when backup plans start, complete, or fail.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-sm font-medium">Enable Backup Notifications</label>
+                      <p className="text-sm text-muted-foreground">
+                        Get notified about backup plan executions
+                      </p>
+                    </div>
+                    <Switch
+                      checked={telegramNotificationsEnabled}
+                      onCheckedChange={setTelegramNotificationsEnabled}
+                      disabled={!telegramEnabled}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="telegram-notification-chat-id">Notification Chat ID</Label>
+                    <Input
+                      id="telegram-notification-chat-id"
+                      type="text"
+                      value={telegramNotificationChatId}
+                      onChange={(e) => setTelegramNotificationChatId(e.target.value)}
+                      placeholder="Enter Chat ID for notifications"
+                      disabled={!telegramEnabled || !telegramNotificationsEnabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Chat ID where backup notifications will be sent. Use /chatid command with your bot to get this.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="border-t pt-4 mt-4">
