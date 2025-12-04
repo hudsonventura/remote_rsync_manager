@@ -848,10 +848,11 @@ public class BackupPlanExecutor
                     result.Directories = ParseNumber(match.Groups[3].Value);
                 }
             }
-            // Number of created files: 1 (reg: 1)
+            // Number of created files: 40 (reg: 29, dir: 11) or Number of created files: 1 (reg: 1)
             else if (trimmedLine.StartsWith("Number of created files:"))
             {
-                var match = Regex.Match(trimmedLine, @"Number of created files:\s+([\d.]+)\s+\(reg:\s+([\d.]+)\)");
+                // Try pattern with dir first: "40 (reg: 29, dir: 11)"
+                var match = Regex.Match(trimmedLine, @"Number of created files:\s+([\d,]+)\s+\(reg:\s+([\d,]+)(?:,\s+dir:\s+([\d,]+))?\)");
                 if (match.Success)
                 {
                     result.CreatedFiles = ParseNumber(match.Groups[1].Value);
@@ -875,28 +876,28 @@ public class BackupPlanExecutor
                     result.TransferredFiles = ParseNumber(match.Groups[1].Value);
                 }
             }
-            // Total file size: 42.076.393 bytes
+            // Total file size: 9,682,371 bytes or 42.076.393 bytes (supports both comma and dot as thousands separator)
             else if (trimmedLine.StartsWith("Total file size:"))
             {
-                var match = Regex.Match(trimmedLine, @"Total file size:\s+([\d.]+)\s+bytes");
+                var match = Regex.Match(trimmedLine, @"Total file size:\s+([\d,.]+)\s+bytes");
                 if (match.Success)
                 {
                     result.TotalFileSize = ParseBytes(match.Groups[1].Value);
                 }
             }
-            // Total transferred file size: 0 bytes
+            // Total transferred file size: 9,682,371 bytes or 0 bytes
             else if (trimmedLine.StartsWith("Total transferred file size:"))
             {
-                var match = Regex.Match(trimmedLine, @"Total transferred file size:\s+([\d.]+)\s+bytes");
+                var match = Regex.Match(trimmedLine, @"Total transferred file size:\s+([\d,.]+)\s+bytes");
                 if (match.Success)
                 {
                     result.TotalTransferredSize = ParseBytes(match.Groups[1].Value);
                 }
             }
-            // Literal data: 0 bytes
+            // Literal data: 9,682,371 bytes or 0 bytes
             else if (trimmedLine.StartsWith("Literal data:"))
             {
-                var match = Regex.Match(trimmedLine, @"Literal data:\s+([\d.]+)\s+bytes");
+                var match = Regex.Match(trimmedLine, @"Literal data:\s+([\d,.]+)\s+bytes");
                 if (match.Success)
                 {
                     result.LiteralData = ParseBytes(match.Groups[1].Value);
@@ -905,16 +906,16 @@ public class BackupPlanExecutor
             // Matched data: 0 bytes
             else if (trimmedLine.StartsWith("Matched data:"))
             {
-                var match = Regex.Match(trimmedLine, @"Matched data:\s+([\d.]+)\s+bytes");
+                var match = Regex.Match(trimmedLine, @"Matched data:\s+([\d,.]+)\s+bytes");
                 if (match.Success)
                 {
                     result.MatchedData = ParseBytes(match.Groups[1].Value);
                 }
             }
-            // File list size: 4.529
+            // File list size: 1,509 or 4.529
             else if (trimmedLine.StartsWith("File list size:"))
             {
-                var match = Regex.Match(trimmedLine, @"File list size:\s+([\d.]+)");
+                var match = Regex.Match(trimmedLine, @"File list size:\s+([\d,.]+)");
                 if (match.Success)
                 {
                     result.FileListSize = ParseBytes(match.Groups[1].Value);
@@ -938,19 +939,19 @@ public class BackupPlanExecutor
                     result.FileListTransferTime = ParseDecimal(match.Groups[1].Value);
                 }
             }
-            // Total bytes sent: 90
+            // Total bytes sent: 657
             else if (trimmedLine.StartsWith("Total bytes sent:"))
             {
-                var match = Regex.Match(trimmedLine, @"Total bytes sent:\s+([\d.]+)");
+                var match = Regex.Match(trimmedLine, @"Total bytes sent:\s+([\d,.]+)");
                 if (match.Success)
                 {
                     result.TotalBytesSent = ParseBytes(match.Groups[1].Value);
                 }
             }
-            // Total bytes received: 4.620
+            // Total bytes received: 6,979,245 or 4.620
             else if (trimmedLine.StartsWith("Total bytes received:"))
             {
-                var match = Regex.Match(trimmedLine, @"Total bytes received:\s+([\d.]+)");
+                var match = Regex.Match(trimmedLine, @"Total bytes received:\s+([\d,.]+)");
                 if (match.Success)
                 {
                     result.TotalBytesReceived = ParseBytes(match.Groups[1].Value);
@@ -985,8 +986,8 @@ public class BackupPlanExecutor
 
     private int ParseNumber(string value)
     {
-        // Remove thousand separators (periods) and parse
-        var cleaned = value.Replace(".", "");
+        // Remove thousand separators (both periods and commas) and parse
+        var cleaned = value.Replace(".", "").Replace(",", "");
         if (int.TryParse(cleaned, out var result))
         {
             return result;
@@ -996,8 +997,9 @@ public class BackupPlanExecutor
 
     private long ParseBytes(string value)
     {
-        // Remove thousand separators (periods) and parse
-        var cleaned = value.Replace(".", "");
+        // Remove thousand separators (both periods and commas) and parse
+        // Note: This assumes commas/periods are thousand separators, not decimal points
+        var cleaned = value.Replace(".", "").Replace(",", "");
         if (long.TryParse(cleaned, out var result))
         {
             return result;
