@@ -148,6 +148,7 @@ export function LoginForm() {
             onChange={(e) => setUsername(e.target.value)}
             required
             disabled={isLoading}
+            autoFocus
           />
         </div>
         <div className="flex flex-col gap-2">
