@@ -365,6 +365,51 @@ public class BackupPlanExecutor
                 {
                     errorBuilder.AppendLine(e.Data);
                     _logger.LogDebug("Rsync error: {Error}", e.Data);
+                    
+                    // Log permission denied and other access errors to database in real-time
+                    var errorLine = e.Data.Trim();
+                    if (errorLine.Contains("Permission denied") || 
+                        errorLine.Contains("opendir") && errorLine.Contains("failed") ||
+                        errorLine.StartsWith("rsync: [sender]") || 
+                        errorLine.StartsWith("rsync: [receiver]"))
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                using var logScope = _serviceScopeFactory.CreateScope();
+                                var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                
+                                // Extract file path from error if possible
+                                var filePath = "";
+                                var fileName = "rsync-error";
+                                var match = Regex.Match(errorLine, @"opendir\s+""([^""]+)""");
+                                if (match.Success)
+                                {
+                                    filePath = match.Groups[1].Value;
+                                    fileName = Path.GetFileName(filePath);
+                                }
+                                
+                                var errorLogEntry = new LogEntry
+                                {
+                                    id = Guid.NewGuid(),
+                                    backupPlanId = backupPlan.id,
+                                    executionId = executionId,
+                                    datetime = DateTime.UtcNow,
+                                    fileName = fileName,
+                                    filePath = filePath,
+                                    action = LogEntry.Action.CopyError.ToString(),
+                                    reason = errorLine
+                                };
+                                logContext.LogEntries.Add(errorLogEntry);
+                                await logContext.SaveChangesAsync();
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to save rsync error log entry");
+                            }
+                        });
+                    }
                 }
             };
 
@@ -409,9 +454,15 @@ public class BackupPlanExecutor
                 }
 
                 // Log rsync finish
-                var finishDescription = process.ExitCode == 0
+                // Exit code 23 means "Partial transfer due to error" - treat as warning, not failure
+                var isPartialTransfer = process.ExitCode == 23;
+                var isSuccess = process.ExitCode == 0;
+                
+                var finishDescription = isSuccess
                     ? $"Rsync finished successfully. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms"
-                    : $"Rsync finished with failure. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms, Error: {error}";
+                    : isPartialTransfer
+                        ? $"Rsync finished with partial transfer (some files skipped). Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms, Error: {error}"
+                        : $"Rsync finished with failure. Exit code: {process.ExitCode}, Duration: {duration.TotalMilliseconds}ms, Error: {error}";
 
                 var finishLogEntry = new LogEntry
                 {
@@ -421,7 +472,7 @@ public class BackupPlanExecutor
                     datetime = endTime,
                     fileName = "rsync-finish",
                     filePath = "",
-                    action = process.ExitCode == 0 ? LogEntry.Action.System.ToString() : LogEntry.Action.CopyError.ToString(),
+                    action = isSuccess ? LogEntry.Action.System.ToString() : (isPartialTransfer ? LogEntry.Action.System.ToString() : LogEntry.Action.CopyError.ToString()),
                     reason = finishDescription
                 };
                 logContext.LogEntries.Add(finishLogEntry);
@@ -429,21 +480,32 @@ public class BackupPlanExecutor
                 await logContext.SaveChangesAsync();
             }
 
-            if (process.ExitCode != 0)
+            // Exit code 23 means "Partial transfer due to error" - some files couldn't be transferred
+            // but the operation completed. Log as warning but don't throw exception.
+            if (process.ExitCode == 23)
+            {
+                _logger.LogWarning("Rsync finished with partial transfer (exit code 23). Some files were skipped due to permission errors. Duration: {Duration}ms, Error: {Error}", 
+                    duration.TotalMilliseconds, error);
+                // Continue execution - don't throw exception
+            }
+            else if (process.ExitCode != 0)
             {
                 _logger.LogError("Rsync finished with failure. Exit code: {ExitCode}, Duration: {Duration}ms, Error: {Error}", 
                     process.ExitCode, duration.TotalMilliseconds, error);
                 throw new Exception($"Rsync failed: {error}");
             }
-
-            _logger.LogInformation("Rsync finished successfully. Exit code: {ExitCode}, Duration: {Duration}ms", 
-                process.ExitCode, duration.TotalMilliseconds);
+            else
+            {
+                _logger.LogInformation("Rsync finished successfully. Exit code: {ExitCode}, Duration: {Duration}ms", 
+                    process.ExitCode, duration.TotalMilliseconds);
+            }
 
             // Parse statistics from rsync output
             ParseRsyncStatistics(output, result, duration.TotalSeconds);
 
             // Save all rsync statistics to database at the end
-            if (!isSimulation && process.ExitCode == 0)
+            // Include statistics even for partial transfers (exit code 23)
+            if (!isSimulation && (process.ExitCode == 0 || process.ExitCode == 23))
             {
                 using (var logScope = _serviceScopeFactory.CreateScope())
                 {
