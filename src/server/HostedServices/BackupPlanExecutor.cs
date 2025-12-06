@@ -311,7 +311,9 @@ public class BackupPlanExecutor
                         }
                         
                         // Update BackupExecution with current file being processed and progress
-                        if (!string.IsNullOrEmpty(logEntry.filePath))
+                        // Only increment counter for regular files, not directories
+                        if (!string.IsNullOrEmpty(logEntry.filePath) && 
+                            !logEntry.reason.Contains("directory", StringComparison.OrdinalIgnoreCase))
                         {
                             _ = Task.Run(async () =>
                             {
@@ -326,6 +328,31 @@ public class BackupPlanExecutor
                                         backupExecution.currentFileName = logEntry.fileName;
                                         backupExecution.currentFilePath = logEntry.filePath;
                                         backupExecution.currentFileIndex++;
+                                        await logContext.SaveChangesAsync();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to update BackupExecution current file");
+                                }
+                            });
+                        }
+                        else if (!string.IsNullOrEmpty(logEntry.filePath))
+                        {
+                            // Update current file info for directories too, but don't increment counter
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                                    
+                                    var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                                    if (backupExecution != null)
+                                    {
+                                        backupExecution.currentFileName = logEntry.fileName;
+                                        backupExecution.currentFilePath = logEntry.filePath;
+                                        // Don't increment counter for directories
                                         await logContext.SaveChangesAsync();
                                     }
                                 }
@@ -668,30 +695,41 @@ public class BackupPlanExecutor
             var output = outputBuilder.ToString();
             
             // Parse the output to count files
-            // Look for "Number of files:" line in stats
+            // Look for "Number of files:" line in stats and extract regular files count
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
             {
                 var trimmedLine = line.Trim();
+                // Number of files: 201 (reg: 163, dir: 38)
                 if (trimmedLine.StartsWith("Number of files:"))
                 {
-                    var match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.]+)");
+                    // Try to extract regular files count from the detailed format
+                    var match = Regex.Match(trimmedLine, @"Number of files:\s+[\d.,]+\s+\(reg:\s+([\d.,]+)");
                     if (match.Success)
                     {
                         var count = ParseNumber(match.Groups[1].Value);
-                        _logger.LogInformation("Dry-run found {FileCount} files to process", count);
+                        _logger.LogInformation("Dry-run found {FileCount} regular files to process", count);
+                        return count;
+                    }
+                    // Fallback to total count if detailed format not available
+                    match = Regex.Match(trimmedLine, @"Number of files:\s+([\d.,]+)");
+                    if (match.Success)
+                    {
+                        var count = ParseNumber(match.Groups[1].Value);
+                        _logger.LogInformation("Dry-run found {FileCount} files to process (using total count)", count);
                         return count;
                     }
                 }
             }
             
-            // If stats not found, count from itemize-changes output
+            // If stats not found, count from itemize-changes output (only regular files, not directories)
             int fileCount = 0;
             foreach (var line in lines)
             {
                 var trimmedLine = line.Trim();
-                // Count lines that represent file operations (not progress or stats)
-                if ((trimmedLine.StartsWith(">") || trimmedLine.StartsWith("<") || trimmedLine.StartsWith("*deleting")) &&
+                // Count only regular files (itemType 'f'), not directories ('d')
+                // Pattern: >f+++++++++ filepath or <f+++++++++ filepath
+                if ((trimmedLine.StartsWith(">f") || trimmedLine.StartsWith("<f") || trimmedLine.StartsWith("*deleting")) &&
                     !trimmedLine.StartsWith("receiving incremental file list") &&
                     !trimmedLine.Contains("Number of") &&
                     !trimmedLine.Contains("Total file size") &&
@@ -701,7 +739,7 @@ public class BackupPlanExecutor
                 }
             }
             
-            _logger.LogInformation("Dry-run counted {FileCount} files from output", fileCount);
+            _logger.LogInformation("Dry-run counted {FileCount} regular files from output", fileCount);
             return fileCount;
         }
         catch (Exception ex)

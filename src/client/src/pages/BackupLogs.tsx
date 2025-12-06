@@ -300,9 +300,11 @@ export function BackupLogs() {
         const logsData: LogsResponse = await apiGet<LogsResponse>(
           `/api/backupplan/${planId}/logs?${params.toString()}`
         )
-        // Filter out internal system logs (rsync-stats, rsync-transfer-speed) from display
+        // Filter out internal system logs (rsync-stats, rsync-transfer-speed, rsync-error) from display
         const filteredLogs = logsData.logs.filter(
-          (log) => log.fileName !== "rsync-stats" && log.fileName !== "rsync-transfer-speed"
+          (log) => log.fileName !== "rsync-stats" && 
+                   log.fileName !== "rsync-transfer-speed" && 
+                   log.fileName !== "rsync-error"
         )
         setLogs(filteredLogs)
         setTotalPages(logsData.totalPages)
