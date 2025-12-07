@@ -112,7 +112,9 @@ public class BackupPlanExecutor
                         id = executionId,
                         backupPlanId = backupPlan.id,
                         name = $"{backupPlan.name} - Execution",
-                        startDateTime = startTime
+                        startDateTime = startTime,
+                        isAutomatic = isAutomatic,
+                        isSimulation = false
                     };
                     logContext.BackupExecutions.Add(backupExecution);
                     
@@ -188,7 +190,9 @@ public class BackupPlanExecutor
                         id = executionId,
                         backupPlanId = backupPlan.id,
                         name = $"{backupPlan.name} - Simulation",
-                        startDateTime = startTime
+                        startDateTime = startTime,
+                        isAutomatic = isAutomatic,
+                        isSimulation = true
                     };
                     logContext.BackupExecutions.Add(backupExecution);
 

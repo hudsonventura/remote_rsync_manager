@@ -43,7 +43,9 @@ public class BackupLogController : ControllerBase
                     Id = e.id,
                     Name = e.name,
                     StartDateTime = e.startDateTime,
-                    EndDateTime = e.endDateTime
+                    EndDateTime = e.endDateTime,
+                    IsAutomatic = e.isAutomatic,
+                    IsSimulation = e.isSimulation
                 })
                 .ToListAsync();
 
@@ -679,6 +681,8 @@ public class BackupExecutionResponse
     public string Name { get; set; } = string.Empty;
     public DateTime StartDateTime { get; set; }
     public DateTime? EndDateTime { get; set; }
+    public bool IsAutomatic { get; set; }
+    public bool IsSimulation { get; set; }
 }
 
 public class ExecutionStatsResponse

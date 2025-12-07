@@ -14,5 +14,7 @@ public class BackupExecution
     public string? currentFilePath { get; set; }
     public int? totalFilesToProcess { get; set; }
     public int currentFileIndex { get; set; }
+    public bool isAutomatic { get; set; } = true;
+    public bool isSimulation { get; set; } = false;
 }
 

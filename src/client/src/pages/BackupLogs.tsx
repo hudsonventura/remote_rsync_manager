@@ -35,6 +35,8 @@ interface BackupExecution {
   name: string
   startDateTime: string
   endDateTime: string | null
+  isAutomatic: boolean
+  isSimulation: boolean
 }
 
 interface ExecutionStats {
@@ -528,10 +530,16 @@ export function BackupLogs() {
                       </tr>
                     </thead>
                     <tbody>
-                      {executions.map((execution) => (
+                      {executions.map((execution) => {
+                        const executionType = execution.isSimulation ? "Simulation" : "Execution"
+                        const triggerType = execution.isAutomatic ? "Auto" : "Manual"
+                        const displayName = backupPlan 
+                          ? `${backupPlan.name} - ${executionType} - ${triggerType}`
+                          : execution.name
+                        return (
                         <tr key={execution.id} className="border-t hover:bg-muted/50">
                           <td className="p-3 text-sm">
-                            {execution.name}
+                            {displayName}
                           </td>
                           <td className="p-3 text-sm text-muted-foreground">
                             {formatExecutionDateTime(execution.startDateTime, timezone)}
@@ -564,7 +572,8 @@ export function BackupLogs() {
                             </Button>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
