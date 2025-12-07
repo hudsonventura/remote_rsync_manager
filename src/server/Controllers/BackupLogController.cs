@@ -372,14 +372,41 @@ public class BackupLogController : ControllerBase
                 stats.DurationSeconds = currentDuration.TotalSeconds;
             }
 
-            // Determine status based on milestone logs and execution completion
+            // Determine status based on execution completion and finish log
             if (execution.endDateTime.HasValue)
             {
-                stats.Status = "Finished";
+                // Execution has finished - check if it completed successfully or was interrupted
+                var finishLog = await _logContext.LogEntries
+                    .Where(log => log.executionId == executionId && log.fileName == "rsync-finish")
+                    .OrderByDescending(log => log.datetime)
+                    .FirstOrDefaultAsync();
+
+                if (finishLog != null)
+                {
+                    // Check the action to determine if it was successful or failed
+                    if (finishLog.action == "CopyError")
+                    {
+                        stats.Status = "Interrupted";
+                    }
+                    else if (finishLog.reason.Contains("finished successfully") || 
+                             finishLog.reason.Contains("partial transfer"))
+                    {
+                        stats.Status = "Completed";
+                    }
+                    else
+                    {
+                        stats.Status = "Interrupted";
+                    }
+                }
+                else
+                {
+                    // No finish log found but endDateTime is set - likely interrupted
+                    stats.Status = "Interrupted";
+                }
             }
             else
             {
-                // Check latest milestone to determine current phase
+                // Execution is still running - check latest milestone to determine current phase
                 var latestMilestone = await _logContext.LogEntries
                     .Where(log => log.executionId == executionId && log.action == "Milestone")
                     .OrderByDescending(log => log.datetime)

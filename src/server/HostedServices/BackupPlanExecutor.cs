@@ -43,6 +43,7 @@ public class BackupPlanExecutor
         }
         var sshKeyPath = Path.Combine(Path.GetTempPath(), $"ssh_key_{Guid.NewGuid()}");
         var result = new ExecutionResult();
+        Guid executionId = Guid.NewGuid(); // Declare outside try block so it's accessible in catch block
 
         using (var scope = _serviceScopeFactory.CreateScope())
         {
@@ -94,7 +95,6 @@ public class BackupPlanExecutor
             }
 
             var startTime = DateTime.UtcNow;
-            Guid executionId = Guid.NewGuid();
             int? totalFilesToProcess = null;
 
             // If not a simulation, run dry-run first to get the list of files that will be affected
@@ -610,6 +610,26 @@ public class BackupPlanExecutor
         }
         catch (Exception ex)
         {
+            // Set endDateTime even on failure so status can be determined
+            var failureTime = DateTime.UtcNow;
+            try
+            {
+                using (var logScope = _serviceScopeFactory.CreateScope())
+                {
+                    var logContext = logScope.ServiceProvider.GetRequiredService<LogDbContext>();
+                    var backupExecution = await logContext.BackupExecutions.FindAsync(executionId);
+                    if (backupExecution != null)
+                    {
+                        backupExecution.endDateTime = failureTime;
+                        await logContext.SaveChangesAsync();
+                    }
+                }
+            }
+            catch (Exception logEx)
+            {
+                _logger.LogWarning(logEx, "Failed to update BackupExecution endDateTime on failure");
+            }
+
             using (var scope = _serviceScopeFactory.CreateScope())
             {
                 var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();

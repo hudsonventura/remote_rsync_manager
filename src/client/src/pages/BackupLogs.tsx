@@ -118,11 +118,24 @@ function getStatusDisplay(status: string): { icon: React.ReactNode; color: strin
         color: "text-purple-600 dark:text-purple-400",
         text: "Finalizing Backup"
       }
-    case "Finished":
+    case "Completed":
       return {
         icon: <CheckCircle2 className="h-5 w-5" />,
         color: "text-green-600 dark:text-green-400",
-        text: "Finished"
+        text: "Completed"
+      }
+    case "Interrupted":
+      return {
+        icon: <X className="h-5 w-5" />,
+        color: "text-red-600 dark:text-red-400",
+        text: "Interrupted"
+      }
+    case "Finished":
+      // Legacy status - treat as Completed
+      return {
+        icon: <CheckCircle2 className="h-5 w-5" />,
+        color: "text-green-600 dark:text-green-400",
+        text: "Completed"
       }
     default:
       return {
@@ -351,9 +364,9 @@ export function BackupLogs() {
 
     fetchExecutionStats()
 
-    // Auto-refresh stats if execution is not finished
+    // Auto-refresh stats if execution is not completed or interrupted
     const interval = setInterval(() => {
-      if (executionStats && executionStats.status !== "Finished") {
+      if (executionStats && executionStats.status !== "Completed" && executionStats.status !== "Interrupted" && executionStats.status !== "Finished") {
         fetchExecutionStats()
       }
     }, 3000) // Refresh every 3 seconds
@@ -731,7 +744,7 @@ export function BackupLogs() {
 
 
               {/* Current File Being Processed */}
-              {executionStats.currentFileName && executionStats.status !== "Finished" && (
+              {executionStats.currentFileName && executionStats.status !== "Completed" && executionStats.status !== "Interrupted" && executionStats.status !== "Finished" && (
                 <div className="mt-4 pt-4 border-t">
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">Currently Processing</p>

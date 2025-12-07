@@ -225,7 +225,7 @@ Migrations Logs:
 dotnet ef migrations add logs1 --context LogDbContext --output-dir Migrations/LogDbContext
 ```
 
-Migrations Logs:
+Migrations Main DB:
 ```bash
 dotnet ef migrations add context1 --context DBContext --output-dir Migrations/DBContext
 ```
