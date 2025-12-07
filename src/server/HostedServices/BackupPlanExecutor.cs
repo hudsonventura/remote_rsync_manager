@@ -281,6 +281,7 @@ public class BackupPlanExecutor
             var batchLock = new object();
             const int BatchSaveIntervalSeconds = 2; // Save logs every 2 seconds
             const int MaxBatchSize = 50; // Save when batch reaches 50 entries
+            LogEntry? lastFileEntry = null; // Track last file entry to update with size from progress lines
 
             process.OutputDataReceived += (sender, e) =>
             {
@@ -290,10 +291,27 @@ public class BackupPlanExecutor
                     outputBuilder.AppendLine(line);
                     _logger.LogDebug("Rsync output: {Output}", line);
 
+                    // Check if this is a progress line with file size (e.g., "23,286 100% 22.21MB/s 0:00:00")
+                    var progressSize = ParseProgressLine(line);
+                    if (progressSize.HasValue && lastFileEntry != null)
+                    {
+                        // Update the last file entry with the size
+                        lastFileEntry.size = progressSize.Value;
+                        // Don't clear lastFileEntry here - it will be replaced when we see the next file entry
+                        return;
+                    }
+
                     // Parse and log file operations in real-time
                     var logEntry = ParseRsyncLine(line, backupPlan.id, executionId, DateTime.UtcNow);
                     if (logEntry != null)
                     {
+                        // Track file entries (not directories) for size updates from progress lines
+                        if (!logEntry.reason.Contains("directory", StringComparison.OrdinalIgnoreCase) && 
+                            !string.IsNullOrEmpty(logEntry.filePath))
+                        {
+                            lastFileEntry = logEntry;
+                        }
+                        
                         List<LogEntry>? batchToSave = null;
                         
                         lock (batchLock)
@@ -1137,6 +1155,29 @@ public class BackupPlanExecutor
             return result;
         }
         return 0;
+    }
+
+    private long? ParseProgressLine(string line)
+    {
+        // Parse rsync progress lines like: "23,286 100% 22.21MB/s 0:00:00"
+        // or "770,560 100% 81.65MB/s 0:00:00"
+        // Format: size percentage speed time
+        var trimmedLine = line.Trim();
+        
+        // Check if this looks like a progress line (contains percentage and speed indicator)
+        if (trimmedLine.Contains("%") && (trimmedLine.Contains("MB/s") || trimmedLine.Contains("kB/s") || trimmedLine.Contains("bytes/sec")))
+        {
+            // Extract the first number (file size)
+            var match = Regex.Match(trimmedLine, @"^([\d,.]+)\s+\d+%");
+            if (match.Success)
+            {
+                var sizeStr = match.Groups[1].Value;
+                var size = ParseBytes(sizeStr);
+                return size > 0 ? size : null;
+            }
+        }
+        
+        return null;
     }
 
     public async Task<ExecutionResult> SimulateBackupPlanAsync(BackupPlan backupPlan)
