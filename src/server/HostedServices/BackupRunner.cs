@@ -89,6 +89,7 @@ public class BackupRunner : IHostedService
             var dbContext = scope.ServiceProvider.GetRequiredService<DBContext>();
             
             var backupPlans = dbContext.BackupPlans
+                .Include(bp => bp.agent)
                 .Where(bp => bp.active)
                 .ToList();
             
@@ -107,16 +108,23 @@ public class BackupRunner : IHostedService
                 // Check if the current minute matches the schedule
                 if (nextOccurrence <= now && (now - nextOccurrence).TotalMinutes < 1)
                 {
-                    // Check if rsync host is configured
-                    if (string.IsNullOrWhiteSpace(plan.rsyncHost))
+                    // Check if agent is configured
+                    if (plan.agent == null)
                     {
-                        _logger.LogWarning("Backup plan '{Name}' (ID: {Id}) is due to run but has no rsync host configured. Skipping execution.", 
+                        _logger.LogWarning("Backup plan '{Name}' (ID: {Id}) is due to run but has no agent configured. Skipping execution.", 
                             plan.name, plan.id);
                         continue;
                     }
                     
-                    _logger.LogInformation("Backup plan '{Name}' (ID: {Id}) is due to run. Schedule: {Schedule}, RsyncHost: {RsyncHost}", 
-                        plan.name, plan.id, plan.schedule, plan.rsyncHost);
+                    if (string.IsNullOrWhiteSpace(plan.agent.rsyncSshKey))
+                    {
+                        _logger.LogWarning("Backup plan '{Name}' (ID: {Id}) is due to run but agent '{AgentName}' (ID: {AgentId}) has no SSH key configured. Skipping execution.", 
+                            plan.name, plan.id, plan.agent.name, plan.agent.id);
+                        continue;
+                    }
+                    
+                    _logger.LogInformation("Backup plan '{Name}' (ID: {Id}) is due to run. Schedule: {Schedule}, Agent: {AgentName}", 
+                        plan.name, plan.id, plan.schedule, plan.agent.name);
                     
                     // Start backup execution asynchronously
                     // Create a new scope for the async execution to avoid disposing the scope too early
