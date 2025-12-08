@@ -295,7 +295,7 @@ cat ./${hostname.trim()}`
                         const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
 ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
-cat ./${hostname.trim()}`v
+cat ./${hostname.trim()}`
                         try {
                           await navigator.clipboard.writeText(commands)
                           setCopied(true)
