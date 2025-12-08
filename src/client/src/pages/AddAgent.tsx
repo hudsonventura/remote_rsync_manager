@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RefreshCw, Copy, Check } from "lucide-react"
+import { RefreshCw, Copy, Check, Terminal as TerminalIcon } from "lucide-react"
 import { apiPost } from "@/lib/api"
+import { Terminal } from "@/components/Terminal"
 
 export function AddAgent() {
   const navigate = useNavigate()
@@ -19,6 +20,7 @@ export function AddAgent() {
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [showTerminal, setShowTerminal] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -240,51 +242,87 @@ export function AddAgent() {
             </p>
           </div>
 
-          {/* SSH Key Generation Commands */}
+          {/* SSH Key Generation */}
           <div className="space-y-2">
-            <Label>Generate SSH Key</Label>
-            <div className="relative">
-              <pre className="flex items-start justify-between gap-4 rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
-                <code className="flex-1 whitespace-pre">
-{`ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
-cat ./id_ed25519.pub && \\
-ssh-copy-id -i ./id_ed25519.pub user@remote-ip`}
-                </code>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    const commands = `ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
-cat ./id_ed25519.pub && \\
-ssh-copy-id -i ./id_ed25519.pub user@remote-ip`
-                    try {
-                      await navigator.clipboard.writeText(commands)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    } catch (err) {
-                      console.error("Failed to copy commands:", err)
-                    }
-                  }}
-                  className="shrink-0"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 mr-2" />
-                      Copy
-                    </>
-                  )}
-                </Button>
-              </pre>
+            <div className="flex items-center justify-between">
+              <Label>Generate SSH Key</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowTerminal(!showTerminal)}
+                disabled={isLoading || isValidating}
+              >
+                <TerminalIcon className="h-4 w-4 mr-2" />
+                {showTerminal ? "Hide Terminal" : "Use Terminal"}
+              </Button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Use these commands to generate an SSH key pair and copy the public key to the remote server. Replace <code className="bg-muted px-1 rounded">user@remote-ip</code> with your actual username and hostname.
-            </p>
+            
+            {showTerminal ? (
+              <div className="space-y-2">
+                <Terminal className="w-full" />
+                <p className="text-sm text-muted-foreground">
+                  Use the terminal above to generate SSH keys. You can run commands like <code className="bg-muted px-1 rounded">ssh-keygen -t ed25519 -f ./id_ed25519 -N ""</code> and then copy the private key content to the SSH Private Key field above.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  <pre className="flex items-start justify-between gap-4 rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
+                    <code className="flex-1 whitespace-pre">
+{(() => {
+  const userAtHost = rsyncUser && hostname.trim()
+    ? `${rsyncUser.trim()}@${hostname.trim()}`
+    : hostname.trim()
+    ? hostname.trim()
+    : "user@remote-ip"
+  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
+cat ./id_ed25519.pub && \\
+ssh-copy-id -i ./id_ed25519.pub ${userAtHost}`
+})()}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        const userAtHost = rsyncUser && hostname.trim()
+                          ? `${rsyncUser.trim()}@${hostname.trim()}`
+                          : hostname.trim()
+                          ? hostname.trim()
+                          : "user@remote-ip"
+                        const commands = `ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
+cat ./id_ed25519.pub && \\
+ssh-copy-id -i ./id_ed25519.pub ${userAtHost}`
+                        try {
+                          await navigator.clipboard.writeText(commands)
+                          setCopied(true)
+                          setTimeout(() => setCopied(false), 2000)
+                        } catch (err) {
+                          console.error("Failed to copy commands:", err)
+                        }
+                      }}
+                      className="shrink-0"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="h-4 w-4 mr-2" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4 mr-2" />
+                          Copy
+                        </>
+                      )}
+                    </Button>
+                  </pre>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Use these commands to generate an SSH key pair and copy the public key to the remote server. Replace <code className="bg-muted px-1 rounded">user@remote-ip</code> with your actual username and hostname. Or click "Use Terminal" to generate keys directly in the browser.
+                </p>
+              </>
+            )}
           </div>
 
           <div className="flex gap-4">

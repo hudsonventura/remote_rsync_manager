@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 using server.Data;
 using server.HostedServices;
+using server.Hubs;
 using server.Logging;
 using server.Models;
 using server.Services;
@@ -24,14 +25,15 @@ builder.Services.AddControllers()
     });
 builder.Services.AddEndpointsApiExplorer();
 
-// Configure CORS - Allow all origins
+// Configure CORS - Allow all origins with credentials for SignalR
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(origin => true) // Allow any origin
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials(); // Required for SignalR with authentication
     });
 });
 
@@ -296,6 +298,36 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = audience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey))
     };
+    
+    // Configure SignalR to accept JWT tokens from query string or Authorization header
+    options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var path = context.HttpContext.Request.Path;
+            
+            // If the request is for the SignalR hub
+            if (path.StartsWithSegments("/hubs"))
+            {
+                // Try to get token from query string (for WebSocket connections)
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken))
+                {
+                    context.Token = accessToken;
+                }
+                // If not in query string, try Authorization header (SignalR client sends it)
+                else
+                {
+                    var authHeader = context.Request.Headers["Authorization"].ToString();
+                    if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
+                    {
+                        context.Token = authHeader.Substring("Bearer ".Length).Trim();
+                    }
+                }
+            }
+            return Task.CompletedTask;
+        }
+    };
 });
 
 builder.Services.AddAuthorization();
@@ -312,6 +344,15 @@ builder.Services.AddSingleton<ITokenStore, TokenStore>();
 builder.Services.AddScoped<BackupPlanExecutor>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ITelegramService, TelegramService>();
+builder.Services.AddSingleton<TerminalService>();
+
+// Register SignalR with options
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.MaximumReceiveMessageSize = 1024 * 1024; // 1MB
+    options.StreamBufferCapacity = 10;
+});
 
 // Register hosted services
 builder.Services.AddHostedService<BackupRunner>();
@@ -355,6 +396,9 @@ else
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Map SignalR hubs
+app.MapHub<TerminalHub>("/hubs/terminal");
 
 // Map API controllers
 app.MapControllers();
