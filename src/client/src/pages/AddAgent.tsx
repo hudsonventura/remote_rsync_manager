@@ -246,16 +246,6 @@ export function AddAgent() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Generate SSH Key</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowTerminal(!showTerminal)}
-                disabled={isLoading || isValidating}
-              >
-                <TerminalIcon className="h-4 w-4 mr-2" />
-                {showTerminal ? "Hide Terminal" : "Use Terminal"}
-              </Button>
             </div>
             
             {showTerminal ? (
@@ -276,14 +266,10 @@ export function AddAgent() {
     : hostname.trim()
     ? hostname.trim()
     : "user@remote-ip"
-  const keyFileName = hostname.trim() || "id_ed25519"
-  const hostOnly = hostname.trim() || "remote-host"
-  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
-cat ./${keyFileName}.pub && \\
+  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-keyscan -H ${hostOnly} >> ~/.ssh/known_hosts 2>/dev/null || true && \\
-ssh-copy-id -o StrictHostKeyChecking=accept-new -i ./${keyFileName}.pub ${userAtHost} && \\
-cat ./${keyFileName}`
+ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
+cat ./${hostname.trim()}`
 })()}
                     </code>
                     <Button
@@ -296,14 +282,10 @@ cat ./${keyFileName}`
                           : hostname.trim()
                           ? hostname.trim()
                           : "user@remote-ip"
-                        const keyFileName = hostname.trim() || "id_ed25519"
-                        const hostOnly = hostname.trim() || "remote-host"
-                        const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
-cat ./${keyFileName}.pub && \\
+                        const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-keyscan -H ${hostOnly} >> ~/.ssh/known_hosts 2>/dev/null || true && \\
-ssh-copy-id -o StrictHostKeyChecking=accept-new -i ./${keyFileName}.pub ${userAtHost} && \\
-cat ./${keyFileName}`
+ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
+cat ./${hostname.trim()}`
                         try {
                           await navigator.clipboard.writeText(commands)
                           setCopied(true)
@@ -329,7 +311,7 @@ cat ./${keyFileName}`
                   </pre>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Use these commands to generate an SSH key pair and copy the public key to the remote server. Replace <code className="bg-muted px-1 rounded">user@remote-ip</code> with your actual username and hostname. Or click "Use Terminal" to generate keys directly in the browser.
+                  Use these commands to generate an SSH key pair and copy the public key to the remote server. Copy the command and past into a terminal to generate the keys.
                 </p>
               </>
             )}
