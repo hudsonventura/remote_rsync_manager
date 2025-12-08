@@ -278,6 +278,7 @@ export function AddAgent() {
     : "user@remote-ip"
   return `cd /tmp/ && ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
 cat ./id_ed25519.pub && \\
+mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
 ssh-copy-id -i ./id_ed25519.pub ${userAtHost}`
 })()}
                     </code>
@@ -291,8 +292,9 @@ ssh-copy-id -i ./id_ed25519.pub ${userAtHost}`
                           : hostname.trim()
                           ? hostname.trim()
                           : "user@remote-ip"
-                        const commands = `ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
+                        const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./id_ed25519 -N "" && \\
 cat ./id_ed25519.pub && \\
+mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
 ssh-copy-id -i ./id_ed25519.pub ${userAtHost}`
                         try {
                           await navigator.clipboard.writeText(commands)
