@@ -277,10 +277,12 @@ export function AddAgent() {
     ? hostname.trim()
     : "user@remote-ip"
   const keyFileName = hostname.trim() || "id_ed25519"
+  const hostOnly = hostname.trim() || "remote-host"
   return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
 cat ./${keyFileName}.pub && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${keyFileName}.pub ${userAtHost} && \\
+ssh-keyscan -H ${hostOnly} >> ~/.ssh/known_hosts 2>/dev/null || true && \\
+ssh-copy-id -o StrictHostKeyChecking=accept-new -i ./${keyFileName}.pub ${userAtHost} && \\
 cat ./${keyFileName}`
 })()}
                     </code>
@@ -295,10 +297,12 @@ cat ./${keyFileName}`
                           ? hostname.trim()
                           : "user@remote-ip"
                         const keyFileName = hostname.trim() || "id_ed25519"
+                        const hostOnly = hostname.trim() || "remote-host"
                         const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
 cat ./${keyFileName}.pub && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${keyFileName}.pub ${userAtHost} && \\
+ssh-keyscan -H ${hostOnly} >> ~/.ssh/known_hosts 2>/dev/null || true && \\
+ssh-copy-id -o StrictHostKeyChecking=accept-new -i ./${keyFileName}.pub ${userAtHost} && \\
 cat ./${keyFileName}`
                         try {
                           await navigator.clipboard.writeText(commands)
