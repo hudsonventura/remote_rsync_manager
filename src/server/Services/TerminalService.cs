@@ -135,9 +135,9 @@ public class TerminalService
             _logger.LogInformation("Terminal started for connection {ConnectionId}", connectionId);
 
             // Configure bash to echo input properly
-            // Send stty command to enable echo
+            // Send stty command to enable echo (redirect output to avoid "Display all possibilities" prompt)
             await Task.Delay(100);
-            await process.StandardInput.WriteLineAsync("stty echo");
+            await process.StandardInput.WriteLineAsync("stty echo 2>/dev/null");
             await process.StandardInput.FlushAsync();
             
             // Send initial prompt

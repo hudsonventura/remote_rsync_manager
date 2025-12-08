@@ -276,10 +276,12 @@ export function AddAgent() {
     : hostname.trim()
     ? hostname.trim()
     : "user@remote-ip"
-  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
+  const keyFileName = hostname.trim() || "id_ed25519"
+  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
+cat ./${keyFileName}.pub && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
-cat ./${hostname.trim()}`
+ssh-copy-id -i ./${keyFileName}.pub ${userAtHost} && \\
+cat ./${keyFileName}`
 })()}
                     </code>
                     <Button
@@ -292,10 +294,12 @@ cat ./${hostname.trim()}`
                           : hostname.trim()
                           ? hostname.trim()
                           : "user@remote-ip"
-                        const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
+                        const keyFileName = hostname.trim() || "id_ed25519"
+                        const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${keyFileName} -N "" && \\
+cat ./${keyFileName}.pub && \\
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
-cat ./${hostname.trim()}`
+ssh-copy-id -i ./${keyFileName}.pub ${userAtHost} && \\
+cat ./${keyFileName}`
                         try {
                           await navigator.clipboard.writeText(commands)
                           setCopied(true)
