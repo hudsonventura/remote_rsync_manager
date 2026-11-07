@@ -15,15 +15,18 @@ public class BackupPlanExecutor
     private readonly ILogger<BackupPlanExecutor> _logger;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly IWebHostEnvironment _environment;
+    private readonly ISecretProtectionService _secretProtection;
 
     public BackupPlanExecutor(
         ILogger<BackupPlanExecutor> logger,
         IServiceScopeFactory serviceScopeFactory,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        ISecretProtectionService secretProtection)
     {
         _logger = logger;
         _serviceScopeFactory = serviceScopeFactory;
         _environment = environment;
+        _secretProtection = secretProtection;
     }
 
     public async Task<ExecutionResult> ExecuteBackupPlanAsync(BackupPlan backupPlan, bool isAutomatic = true, bool isSimulation = false)
@@ -54,14 +57,18 @@ public class BackupPlanExecutor
         try
         {
             // Normalize SSH key content: convert CRLF to LF, trim whitespace, ensure it ends with newline
-            var normalizedKey = NormalizeSshKeyContent(agent.rsyncSshKey);
+            var rawKey = _secretProtection.Unprotect(agent.rsyncSshKey) ?? agent.rsyncSshKey;
+            var normalizedKey = NormalizeSshKeyContent(rawKey);
             
             // Write SSH key to temporary file with UTF-8 encoding without BOM
             await File.WriteAllTextAsync(sshKeyPath, normalizedKey, new System.Text.UTF8Encoding(false));
             
             // Set correct permissions (600) for SSH private key
             // SSH requires private keys to have permissions 600 (read/write for owner only)
-            File.SetUnixFileMode(sshKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            {
+                File.SetUnixFileMode(sshKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
             
             // Also use chmod command as a fallback to ensure permissions are correct
             try
@@ -155,24 +162,51 @@ public class BackupPlanExecutor
             }
 
             // Build rsync command
-            var rsyncArgs = new StringBuilder();
+            var knownHostsPath = GetKnownHostsPath();
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "rsync",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
             
             if (isSimulation)
             {
-                rsyncArgs.Append("--dry-run ");
+                processStartInfo.ArgumentList.Add("--dry-run");
             }
             
-            rsyncArgs.Append("-avz --progress --delete --itemize-changes --stats ");
+            processStartInfo.ArgumentList.Add("-avz");
+            processStartInfo.ArgumentList.Add("--progress");
+            processStartInfo.ArgumentList.Add("--delete");
+            processStartInfo.ArgumentList.Add("--itemize-changes");
+            processStartInfo.ArgumentList.Add("--stats");
             
             // Build SSH command for -e option
-            var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
-            rsyncArgs.Append($"-e \"{sshCommand}\" ");
+            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
+            processStartInfo.ArgumentList.Add("-e");
+            processStartInfo.ArgumentList.Add(sshCommand);
             
-            var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
-            
-            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
+            // Ensure destination directory exists on server
+            if (!Directory.Exists(backupPlan.destination))
+            {
+                try
+                {
+                    Directory.CreateDirectory(backupPlan.destination);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not ensure destination directory exists: {Destination}", backupPlan.destination);
+                }
+            }
 
-            var fullCommand = $"rsync {rsyncArgs}";
+            var sourcePath = await FormatRsyncSourcePathAsync(agent, sshKeyPath, knownHostsPath, backupPlan.source);
+            processStartInfo.ArgumentList.Add("--");
+            processStartInfo.ArgumentList.Add(sourcePath);
+            processStartInfo.ArgumentList.Add(backupPlan.destination);
+
+            var fullCommand = $"rsync {string.Join(" ", processStartInfo.ArgumentList)}";
 
             _logger.LogInformation("Rsync command: {Command}", fullCommand);
             _logger.LogInformation("Starting rsync execution for backup plan {BackupPlanId} (Simulation: {IsSimulation})", backupPlan.id, isSimulation);
@@ -266,17 +300,7 @@ public class BackupPlanExecutor
                 }
             }
 
-            // Execute rsync
-            var processStartInfo = new ProcessStartInfo
-            {
-                FileName = "rsync",
-                Arguments = rsyncArgs.ToString(),
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
+            // Execute rsync using processStartInfo constructed above
             using var process = new Process { StartInfo = processStartInfo };
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
@@ -688,25 +712,30 @@ public class BackupPlanExecutor
         try
         {
             // Build rsync command with --dry-run
-            var rsyncArgs = new StringBuilder();
-            rsyncArgs.Append("--dry-run -avz --delete --itemize-changes --stats ");
-            
-            // Build SSH command for -e option
-            var sshCommand = $"ssh -i {sshKeyPath} -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
-            rsyncArgs.Append($"-e \"{sshCommand}\" ");
-            
-            var sourcePath = $"{agent.rsyncUser}@{agent.hostname}:{backupPlan.source}";
-            rsyncArgs.Append($"{sourcePath} {backupPlan.destination}");
-
+            var knownHostsPath = GetKnownHostsPath();
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = "rsync",
-                Arguments = rsyncArgs.ToString(),
+                UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false,
                 CreateNoWindow = true
             };
+
+            processStartInfo.ArgumentList.Add("--dry-run");
+            processStartInfo.ArgumentList.Add("-avz");
+            processStartInfo.ArgumentList.Add("--delete");
+            processStartInfo.ArgumentList.Add("--itemize-changes");
+            processStartInfo.ArgumentList.Add("--stats");
+
+            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
+            processStartInfo.ArgumentList.Add("-e");
+            processStartInfo.ArgumentList.Add(sshCommand);
+
+            var sourcePath = await FormatRsyncSourcePathAsync(agent, sshKeyPath, knownHostsPath, backupPlan.source);
+            processStartInfo.ArgumentList.Add("--");
+            processStartInfo.ArgumentList.Add(sourcePath);
+            processStartInfo.ArgumentList.Add(backupPlan.destination);
 
             using var process = new Process { StartInfo = processStartInfo };
             var outputBuilder = new StringBuilder();
@@ -789,6 +818,25 @@ public class BackupPlanExecutor
             _logger.LogError(ex, "Error running dry-run: {Error}", ex.Message);
             return 0;
         }
+    }
+
+    private static string GetKnownHostsPath()
+    {
+        var dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "data");
+        if (!Directory.Exists(dataDirectory))
+        {
+            Directory.CreateDirectory(dataDirectory);
+        }
+        var knownHostsPath = Path.Combine(dataDirectory, "known_hosts");
+        if (!File.Exists(knownHostsPath))
+        {
+            File.WriteAllText(knownHostsPath, string.Empty);
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            {
+                try { File.SetUnixFileMode(knownHostsPath, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { }
+            }
+        }
+        return knownHostsPath;
     }
 
     private LogEntry? ParseRsyncLine(string line, Guid backupPlanId, Guid executionId, DateTime timestamp)
@@ -1209,7 +1257,70 @@ public class BackupPlanExecutor
         return await ExecuteBackupPlanAsync(backupPlan, false, true);
     }
 
+    private async Task<string> FormatRsyncSourcePathAsync(Agent agent, string sshKeyPath, string knownHostsPath, string rawSource)
+    {
+        var trimmed = rawSource?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return $"{agent.rsyncUser}@{agent.hostname}:";
+        }
 
+        // If it already ends with a slash, it's explicitly copying directory contents
+        if (trimmed.EndsWith('/'))
+        {
+            return $"{agent.rsyncUser}@{agent.hostname}:{trimmed}";
+        }
 
+        // Check if the remote path on the agent is a directory
+        bool isDirectory = await CheckIfRemotePathIsDirectoryAsync(agent, sshKeyPath, knownHostsPath, trimmed);
+        if (isDirectory)
+        {
+            trimmed += "/";
+            _logger.LogInformation("Normalized remote directory source with trailing slash: {Source}", trimmed);
+        }
 
+        return $"{agent.rsyncUser}@{agent.hostname}:{trimmed}";
+    }
+
+    private async Task<bool> CheckIfRemotePathIsDirectoryAsync(Agent agent, string sshKeyPath, string knownHostsPath, string remotePath)
+    {
+        try
+        {
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "ssh",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            processStartInfo.ArgumentList.Add("-i");
+            processStartInfo.ArgumentList.Add(sshKeyPath);
+            processStartInfo.ArgumentList.Add("-p");
+            processStartInfo.ArgumentList.Add(agent.rsyncPort.ToString());
+            processStartInfo.ArgumentList.Add("-o");
+            processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
+            processStartInfo.ArgumentList.Add("-o");
+            processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsPath}");
+            processStartInfo.ArgumentList.Add("-o");
+            processStartInfo.ArgumentList.Add("ConnectTimeout=5");
+            processStartInfo.ArgumentList.Add($"{agent.rsyncUser}@{agent.hostname}");
+            processStartInfo.ArgumentList.Add("--");
+            processStartInfo.ArgumentList.Add($"test -d \"{remotePath.Replace("\"", "\\\"")}\"");
+
+            using var process = new Process { StartInfo = processStartInfo };
+            process.Start();
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await process.WaitForExitAsync(cts.Token);
+
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check if remote path {Path} is a directory on agent {Agent}. Falling back to heuristic.", remotePath, agent.hostname);
+            return !Path.HasExtension(remotePath);
+        }
+    }
 }

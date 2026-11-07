@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
@@ -25,21 +26,6 @@ builder.Services.AddControllers()
     });
 builder.Services.AddEndpointsApiExplorer();
 
-// Configure CORS - Allow all origins with credentials for SignalR
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.SetIsOriginAllowed(origin => true) // Allow any origin
-              .AllowAnyMethod()
-              .AllowAnyHeader()
-              .AllowCredentials(); // Required for SignalR with authentication
-    });
-});
-
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
-
 // Ensure data directory exists
 var dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "data");
 Console.WriteLine($"Data directory: {dataDirectory}");
@@ -47,6 +33,27 @@ if (!Directory.Exists(dataDirectory))
 {
     Directory.CreateDirectory(dataDirectory);
 }
+
+// Configure CORS - Restrict allowed origins with credentials
+var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var defaultOrigins = new[] { "https://localhost:5001", "http://localhost:5000", "http://localhost:5173" };
+var allowedOrigins = configuredOrigins.Length > 0 ? configuredOrigins : defaultOrigins;
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials(); // Required for SignalR with authentication
+    });
+});
+
+// Configure Data Protection
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDirectory, "keys")))
+    .SetApplicationName("Remember");
 
 // Helper function to resolve database paths
 string ResolveDbPath(string connectionString)
@@ -74,7 +81,8 @@ string ResolveDbPath(string connectionString)
 var connectionString = "Data Source=data/server.db";
 
 builder.Services.AddDbContext<DBContext>(options =>
-    options.UseSqlite(ResolveDbPath(connectionString)));
+    options.UseSqlite(ResolveDbPath(connectionString))
+           .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
 
 // Helper function to generate self-signed certificate
 System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateSelfSignedCertificate()
@@ -114,6 +122,7 @@ System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateSelfSigne
 // Run migrations and configure certificate before building the app
 using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
     .UseSqlite(ResolveDbPath(connectionString))
+    .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
     .Options))
 {
     // Apply pending migrations
@@ -188,6 +197,17 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
             listenOptions.UseHttps(certConfig.certificatePath, certConfig.certificatePassword);
         });
     });
+
+    // Secure permissions on sensitive files (Linux/macOS)
+    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+    {
+        try
+        {
+            if (File.Exists(certConfig.certificatePath))
+                File.SetUnixFileMode(certConfig.certificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch { }
+    }
 }
 
 // Configure separate SQLite database for logs
@@ -224,6 +244,7 @@ string audience;
 
 using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
     .UseSqlite(ResolveDbPath(connectionString))
+    .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
     .Options))
 {
     var jwtConfig = dbContext.JwtConfigs.FirstOrDefault();
@@ -271,13 +292,28 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
             passwordHash = adminPasswordHash,
             isAdmin = true,
             isActive = true,
+            securityStamp = Guid.NewGuid().ToString(),
             createdAt = DateTime.UtcNow
         };
 
         dbContext.Users.Add(adminUser);
         dbContext.SaveChanges();
 
-        Console.WriteLine("Default admin user created. Username: admin, Password: admin");
+        Console.WriteLine("Default admin user created. Username: admin");
+    }
+
+    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+    {
+        try
+        {
+            var serverDbPath = Path.Combine(dataDirectory, "server.db");
+            if (File.Exists(serverDbPath))
+                File.SetUnixFileMode(serverDbPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var logsDbPath = Path.Combine(dataDirectory, "logs.db");
+            if (File.Exists(logsDbPath))
+                File.SetUnixFileMode(logsDbPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch { }
     }
 }
 
@@ -299,9 +335,35 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey))
     };
     
-    // Configure SignalR to accept JWT tokens from query string or Authorization header
     options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
     {
+        OnTokenValidated = async context =>
+        {
+            var db = context.HttpContext.RequestServices.GetRequiredService<DBContext>();
+            var userIdClaim = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                context.Fail("Invalid user identifier claim.");
+                return;
+            }
+
+            var user = await db.Users.FindAsync(userId);
+            if (user == null || !user.isActive)
+            {
+                context.Fail("User is inactive or deleted.");
+                return;
+            }
+
+            var tokenStamp = context.Principal?.FindFirst("security_stamp")?.Value;
+            if (!string.IsNullOrEmpty(tokenStamp) && !string.IsNullOrEmpty(user.securityStamp))
+            {
+                if (tokenStamp != user.securityStamp)
+                {
+                    context.Fail("Security stamp mismatch. Session invalidated.");
+                    return;
+                }
+            }
+        },
         OnMessageReceived = context =>
         {
             var path = context.HttpContext.Request.Path;
@@ -338,6 +400,7 @@ builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new CustomLoggerProvider());
 
 // Register application services
+builder.Services.AddSingleton<ISecretProtectionService, SecretProtectionService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddSingleton<ITokenStore, TokenStore>();

@@ -135,19 +135,21 @@ public class UserController : ControllerBase
             }
 
             // Validate password
-            if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 3)
+            if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
             {
-                return BadRequest(new { message = "Password must be at least 3 characters long" });
+                return BadRequest(new { message = "Password must be at least 8 characters long" });
             }
 
+            var authService = HttpContext.RequestServices.GetRequiredService<IAuthService>();
             var user = new User
             {
                 id = Guid.NewGuid(),
                 username = request.Username,
                 email = request.Email,
-                passwordHash = AuthService.HashPassword(request.Password),
+                passwordHash = authService.HashPassword(new User { username = request.Username }, request.Password),
                 isAdmin = request.IsAdmin ?? false,
                 isActive = true,
+                securityStamp = Guid.NewGuid().ToString(),
                 createdAt = DateTime.UtcNow
             };
 
@@ -220,11 +222,13 @@ public class UserController : ControllerBase
             // Update password if provided
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
-                if (request.Password.Length < 3)
+                if (request.Password.Length < 8)
                 {
-                    return BadRequest(new { message = "Password must be at least 3 characters long" });
+                    return BadRequest(new { message = "Password must be at least 8 characters long" });
                 }
-                user.passwordHash = AuthService.HashPassword(request.Password);
+                var authService = HttpContext.RequestServices.GetRequiredService<IAuthService>();
+                user.passwordHash = authService.HashPassword(user, request.Password);
+                user.securityStamp = Guid.NewGuid().ToString();
             }
 
             // Update admin status if provided
@@ -236,7 +240,11 @@ public class UserController : ControllerBase
             // Update active status if provided
             if (request.IsActive.HasValue)
             {
-                user.isActive = request.IsActive.Value;
+                if (user.isActive != request.IsActive.Value)
+                {
+                    user.isActive = request.IsActive.Value;
+                    user.securityStamp = Guid.NewGuid().ToString();
+                }
             }
 
             // Update timezone if provided
@@ -297,14 +305,24 @@ public class UserController : ControllerBase
                 return NotFound(new { message = "User not found" });
             }
 
-            // Validate new password
-            if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 3)
+            var authService = HttpContext.RequestServices.GetRequiredService<IAuthService>();
+            if (!string.IsNullOrEmpty(request.CurrentPassword))
             {
-                return BadRequest(new { message = "New password must be at least 3 characters long" });
+                if (!authService.VerifyPassword(user, request.CurrentPassword))
+                {
+                    return BadRequest(new { message = "Current password is incorrect" });
+                }
+            }
+
+            // Validate new password
+            if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
+            {
+                return BadRequest(new { message = "New password must be at least 8 characters long" });
             }
 
             // Update password
-            user.passwordHash = AuthService.HashPassword(request.NewPassword);
+            user.passwordHash = authService.HashPassword(user, request.NewPassword);
+            user.securityStamp = Guid.NewGuid().ToString();
             user.updatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
@@ -515,13 +533,15 @@ public class UserController : ControllerBase
             }
 
             // Validate new password
-            if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 3)
+            if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
             {
-                return BadRequest(new { message = "New password must be at least 3 characters long" });
+                return BadRequest(new { message = "New password must be at least 8 characters long" });
             }
 
+            var authService = HttpContext.RequestServices.GetRequiredService<IAuthService>();
             // Update password
-            user.passwordHash = AuthService.HashPassword(request.NewPassword);
+            user.passwordHash = authService.HashPassword(user, request.NewPassword);
+            user.securityStamp = Guid.NewGuid().ToString();
             user.updatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
@@ -680,6 +700,7 @@ public class UpdatePreferencesRequest
 
 public class ChangePasswordRequest
 {
+    public string? CurrentPassword { get; set; }
     public string NewPassword { get; set; } = string.Empty;
 }
 

@@ -267,6 +267,7 @@ namespace server.Migrations.DBContext
             modelBuilder.Entity("server.Models.User", b =>
                 {
                     b.Property<Guid>("id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("createdAt")
@@ -286,6 +287,10 @@ namespace server.Migrations.DBContext
                     b.Property<string>("passwordHash")
                         .IsRequired()
                         .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("securityStamp")
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("theme")

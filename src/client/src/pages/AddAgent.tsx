@@ -17,12 +17,15 @@ export function AddAgent() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
+  const [validationError, setValidationError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
+    setValidationMessage(null)
+    setValidationError(null)
     setSuccess(false)
     setIsLoading(true)
 
@@ -64,19 +67,20 @@ export function AddAgent() {
 
   const handleValidate = async () => {
     if (!hostname.trim()) {
-      setError("Hostname is required to validate the connection")
+      setValidationError("Hostname is required to validate the connection")
       setValidationMessage(null)
       return
     }
 
     if (!rsyncSshKey.trim()) {
-      setError("SSH private key is required to validate the connection")
+      setValidationError("SSH private key is required to validate the connection")
       setValidationMessage(null)
       return
     }
 
     setIsValidating(true)
     setValidationMessage(null)
+    setValidationError(null)
     setError(null)
 
     try {
@@ -103,10 +107,10 @@ export function AddAgent() {
       )
       
       setValidationMessage(`✓ ${result.message}`)
-      setError(null)
+      setValidationError(null)
     } catch (err: any) {
       if (err instanceof TypeError && err.message === "Failed to fetch") {
-        setError("Unable to connect to the server. Please make sure the backend is running.")
+        setValidationError("Unable to connect to the server. Please make sure the backend is running.")
       } else {
         // The apiPost helper already extracts the error message from the response
         // so err.message should contain the message from the API
@@ -119,9 +123,9 @@ export function AddAgent() {
         }
         
         // Format multi-line error messages for better display
-        setError(errorMessage)
-        setValidationMessage(null)
+        setValidationError(errorMessage)
       }
+      setValidationMessage(null)
     } finally {
       setIsValidating(false)
     }
@@ -147,12 +151,6 @@ export function AddAgent() {
           {success && (
             <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
               Agent created successfully! Redirecting...
-            </div>
-          )}
-
-          {validationMessage && (
-            <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
-              {validationMessage}
             </div>
           )}
 
@@ -301,27 +299,41 @@ cat ./${hostname.trim()}`
             </p>
           </div>
 
-          <div className="flex gap-4">
-            <Button type="submit" disabled={isLoading || isValidating}>
-              {isLoading ? "Creating..." : "Create Agent"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleValidate}
-              disabled={isLoading || isValidating}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
-              {isValidating ? "Validating..." : "Validate Connection"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate("/")}
-              disabled={isLoading || isValidating}
-            >
-              Cancel
-            </Button>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <Button type="submit" disabled={isLoading || isValidating}>
+                {isLoading ? "Creating..." : "Create Agent"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleValidate}
+                disabled={isLoading || isValidating}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
+                {isValidating ? "Validating..." : "Validate Connection"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => navigate("/")}
+                disabled={isLoading || isValidating}
+              >
+                Cancel
+              </Button>
+            </div>
+
+            {validationMessage && (
+              <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400 max-w-md">
+                {validationMessage}
+              </div>
+            )}
+
+            {validationError && (
+              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive max-w-md whitespace-pre-line">
+                {validationError}
+              </div>
+            )}
           </div>
         </form>
       </div>

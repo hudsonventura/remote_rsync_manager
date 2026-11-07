@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using server.Data;
@@ -7,6 +8,7 @@ using server.HostedServices;
 namespace server.Controllers;
 
 [ApiController]
+[Authorize]
 public class BackupPlanController : ControllerBase
 {
     private readonly DBContext _context;

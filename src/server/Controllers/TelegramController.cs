@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Telegram.Bot.Types;
 using server.Services;
@@ -8,6 +9,7 @@ namespace server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class TelegramController : ControllerBase
 {
     private readonly ITelegramService _telegramService;
@@ -116,6 +118,7 @@ public class TelegramController : ControllerBase
         }
     }
 
+    [AllowAnonymous]
     [HttpPost("webhook")]
     public async Task<IActionResult> Webhook([FromBody] Update update)
     {

@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { apiGet } from "@/lib/api"
-import { Folder, File, ArrowLeft, X } from "lucide-react"
+import { apiGet, apiPost } from "@/lib/api"
+import { Folder, File, ArrowLeft, X, FolderPlus, RefreshCw } from "lucide-react"
 
 interface FileSystemItem {
   name: string
@@ -28,11 +28,18 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pathHistory, setPathHistory] = useState<string[]>([])
+  const [isCreatingDir, setIsCreatingDir] = useState(false)
+  const [newDirName, setNewDirName] = useState("")
+  const [isSubmittingDir, setIsSubmittingDir] = useState(false)
+  const [createDirError, setCreateDirError] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
+      setIsCreatingDir(false)
+      setNewDirName("")
+      setCreateDirError(null)
+
       // Use initialPath if provided, otherwise start with root path
-      // Determine default root path based on OS (but we'll use "/" for simplicity)
       let startPath = "/"
       if (initialPath) {
         const normalizedPath = initialPath.trim()
@@ -58,8 +65,11 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
       const data: FileSystemItem[] = await apiGet<FileSystemItem[]>(url)
       setItems(data)
       
-      // Set the current path to what we requested (or default to "/")
-      const displayPath = path || "/"
+      // Set the current path to what we requested, or resolve to the actual item path if starting from "/"
+      let displayPath = path || "/"
+      if ((!path || path === "/") && data.length > 0 && data[0].path) {
+        displayPath = data[0].path
+      }
       setCurrentPath(displayPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load directory")
@@ -96,6 +106,40 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
     onClose()
   }
 
+  const handleCreateDirectory = async () => {
+    const trimmed = newDirName.trim()
+    if (!trimmed) {
+      setCreateDirError("Directory name is required")
+      return
+    }
+
+    if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) {
+      setCreateDirError("Directory name cannot contain slashes or traversal (..) characters")
+      return
+    }
+
+    setIsSubmittingDir(true)
+    setCreateDirError(null)
+
+    try {
+      await apiPost<{ message: string; pathName?: string }>("/api/filesystem/create-directory", {
+        parentPath: currentPath,
+        directoryName: trimmed,
+      })
+
+      // Reset create dir form
+      setNewDirName("")
+      setIsCreatingDir(false)
+
+      // Reload directory list to show the new folder
+      await loadDirectory(currentPath)
+    } catch (err: any) {
+      setCreateDirError(err instanceof Error ? err.message : (err?.message || "Failed to create directory"))
+    } finally {
+      setIsSubmittingDir(false)
+    }
+  }
+
   if (!open) return null
 
   return (
@@ -130,12 +174,79 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
           <Button
             variant="outline"
             size="sm"
+            onClick={() => {
+              setIsCreatingDir((prev) => !prev)
+              setCreateDirError(null)
+            }}
+            disabled={isLoading || isSubmittingDir}
+            title="Create Directory"
+          >
+            <FolderPlus className="h-4 w-4 mr-2" />
+            New Folder
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => loadDirectory(currentPath)}
             disabled={isLoading}
+            title="Refresh"
           >
-            Refresh
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </Button>
         </div>
+
+        {isCreatingDir && (
+          <div className="p-3 bg-muted/40 border-b space-y-2">
+            <div className="flex items-center gap-2">
+              <FolderPlus className="h-4 w-4 text-primary shrink-0" />
+              <Input
+                placeholder="Directory name (e.g. backup_dest)"
+                value={newDirName}
+                onChange={(e) => {
+                  setNewDirName(e.target.value)
+                  setCreateDirError(null)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleCreateDirectory()
+                  } else if (e.key === "Escape") {
+                    setIsCreatingDir(false)
+                    setNewDirName("")
+                    setCreateDirError(null)
+                  }
+                }}
+                autoFocus
+                disabled={isSubmittingDir}
+                className="flex-1 h-9 text-sm"
+              />
+              <Button
+                size="sm"
+                className="h-9"
+                onClick={handleCreateDirectory}
+                disabled={isSubmittingDir || !newDirName.trim()}
+              >
+                {isSubmittingDir ? "Creating..." : "Create"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  setIsCreatingDir(false)
+                  setNewDirName("")
+                  setCreateDirError(null)
+                }}
+                disabled={isSubmittingDir}
+              >
+                Cancel
+              </Button>
+            </div>
+            {createDirError && (
+              <p className="text-xs text-destructive pl-6">{createDirError}</p>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 overflow-auto p-4">
           {error && (
@@ -191,4 +302,3 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
     </div>
   )
 }
-

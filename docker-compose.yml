@@ -10,7 +10,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=https://+:5001
-      - CLIENT_DEV_MODE=true
+      - CLIENT_DEV_MODE=false
       - STORE_PATH=/store
       - HOST_PATH=/host
     restart: unless-stopped

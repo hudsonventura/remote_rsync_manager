@@ -37,6 +37,7 @@ export function Profile() {
   const [usernameSuccess, setUsernameSuccess] = useState(false)
 
   // Change password form
+  const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -100,8 +101,8 @@ export function Profile() {
     setPasswordError(null)
     setPasswordSuccess(false)
 
-    if (!newPassword || newPassword.length < 3) {
-      setPasswordError("New password must be at least 3 characters long")
+    if (!newPassword || newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters long")
       return
     }
 
@@ -113,9 +114,11 @@ export function Profile() {
     try {
       setIsChangingPassword(true)
       await apiPut("/api/users/me/change-password", {
+        currentPassword,
         newPassword
       })
       setPasswordSuccess(true)
+      setCurrentPassword("")
       setNewPassword("")
       setConfirmPassword("")
       setTimeout(() => setPasswordSuccess(false), 3000)
@@ -236,6 +239,18 @@ export function Profile() {
         <h2 className="text-lg font-semibold mb-4">Change Password</h2>
         <form onSubmit={handleChangePassword} className="space-y-4">
           <div className="space-y-2">
+            <Label htmlFor="current-password">Current Password</Label>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="Enter current password"
+              required
+              disabled={isChangingPassword}
+            />
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="new-password">New Password</Label>
             <Input
               id="new-password"
@@ -244,7 +259,7 @@ export function Profile() {
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="Enter new password"
               required
-              minLength={3}
+              minLength={8}
               disabled={isChangingPassword}
             />
           </div>
@@ -257,7 +272,7 @@ export function Profile() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Confirm new password"
               required
-              minLength={3}
+              minLength={8}
               disabled={isChangingPassword}
             />
           </div>

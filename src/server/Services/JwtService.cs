@@ -41,6 +41,7 @@ public class JwtService : IJwtService
             new Claim(ClaimTypes.Name, user.username),
             new Claim(ClaimTypes.Email, user.email),
             new Claim(ClaimTypes.Role, user.isAdmin ? "Admin" : "User"),
+            new Claim("security_stamp", user.securityStamp ?? string.Empty),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 

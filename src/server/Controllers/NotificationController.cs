@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using server.Data;
@@ -6,6 +7,7 @@ using server.Models;
 namespace server.Controllers;
 
 [ApiController]
+[Authorize]
 public class NotificationController : ControllerBase
 {
     private readonly DBContext _context;

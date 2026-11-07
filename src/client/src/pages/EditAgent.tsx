@@ -39,6 +39,7 @@ export function EditAgent() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
+  const [validationError, setValidationError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -77,6 +78,8 @@ export function EditAgent() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
+    setValidationMessage(null)
+    setValidationError(null)
     setIsLoading(true)
 
       try {
@@ -115,12 +118,13 @@ export function EditAgent() {
 
   const handleRevalidate = async () => {
     if (!id) {
-      setError("Agent ID is required")
+      setValidationError("Agent ID is required")
       return
     }
 
     setIsValidating(true)
     setValidationMessage(null)
+    setValidationError(null)
     setError(null)
 
     try {
@@ -141,10 +145,10 @@ export function EditAgent() {
       )
       
       setValidationMessage(`✓ ${result.message}`)
-      setError(null)
+      setValidationError(null)
     } catch (err: any) {
       if (err instanceof TypeError && err.message === "Failed to fetch") {
-        setError("Unable to connect to the server. Please make sure the backend is running.")
+        setValidationError("Unable to connect to the server. Please make sure the backend is running.")
       } else {
         // The apiPost helper already extracts the error message from the response
         // so err.message should contain the message from the API
@@ -157,9 +161,9 @@ export function EditAgent() {
         }
         
         // Format multi-line error messages for better display
-        setError(errorMessage)
-        setValidationMessage(null)
+        setValidationError(errorMessage)
       }
+      setValidationMessage(null)
     } finally {
       setIsValidating(false)
     }
@@ -227,12 +231,6 @@ export function EditAgent() {
       {error && (
         <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive whitespace-pre-line">
           {error}
-        </div>
-      )}
-
-      {validationMessage && (
-        <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400">
-          {validationMessage}
         </div>
       )}
 
@@ -343,59 +341,73 @@ export function EditAgent() {
             )}
           </div>
 
-          <div className="flex gap-4">
-                <Button type="submit" disabled={isLoading || isValidating}>
-                  {isLoading ? "Saving..." : "Save Changes"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleRevalidate}
-                  disabled={isLoading || isValidating}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
-                  {isValidating ? "Validating..." : "Revalidate Connection"}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={isLoading || isValidating}
-                      className="text-destructive hover:text-destructive"
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <Button type="submit" disabled={isLoading || isValidating}>
+                {isLoading ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleRevalidate}
+                disabled={isLoading || isValidating}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isValidating ? "animate-spin" : ""}`} />
+                {isValidating ? "Validating..." : "Revalidate Connection"}
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isLoading || isValidating}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This action cannot be undone. This will permanently delete the agent
+                      <strong> {name}</strong> and all of its backup plans.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
                       Delete
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This action cannot be undone. This will permanently delete the agent
-                        <strong> {name}</strong> and all of its backup plans.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={handleDelete}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate("/agents")}
-                  disabled={isLoading || isValidating}
-                >
-                  Cancel
-                </Button>
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => navigate("/agents")}
+                disabled={isLoading || isValidating}
+              >
+                Cancel
+              </Button>
+            </div>
+
+            {validationMessage && (
+              <div className="rounded-md bg-green-500/15 p-3 text-sm text-green-600 dark:text-green-400 max-w-md">
+                {validationMessage}
               </div>
+            )}
+
+            {validationError && (
+              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive max-w-md whitespace-pre-line">
+                {validationError}
+              </div>
+            )}
+          </div>
         </form>
       </div>
     </div>

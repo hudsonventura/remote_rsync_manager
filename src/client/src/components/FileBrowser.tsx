@@ -88,7 +88,9 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
   }
 
   const handleSelectCurrentPath = () => {
-    onSelect(currentPath)
+    // When selecting a directory as the source, append trailing slash so rsync copies directory contents
+    const pathToSelect = currentPath ? (currentPath.endsWith("/") ? currentPath : `${currentPath}/`) : "/"
+    onSelect(pathToSelect)
     onClose()
   }
 

@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting;
 using server.Data;
 using server.Models;
+using server.Services;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Net.Security;
@@ -12,17 +14,20 @@ namespace server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class AgentController : ControllerBase
 {
     private readonly DBContext _context;
     private readonly ILogger<AgentController> _logger;
     private readonly IWebHostEnvironment _environment;
+    private readonly ISecretProtectionService _secretProtection;
 
-    public AgentController(server.Data.DBContext context, ILogger<AgentController> logger, IWebHostEnvironment environment)
+    public AgentController(server.Data.DBContext context, ILogger<AgentController> logger, IWebHostEnvironment environment, ISecretProtectionService secretProtection)
     {
         _context = context;
         _logger = logger;
         _environment = environment;
+        _secretProtection = secretProtection;
     }
 
     [HttpPost]
@@ -37,6 +42,15 @@ public class AgentController : ControllerBase
         }
 
         var hostname = request.Hostname.Trim();
+        if (!IsValidHostname(hostname))
+        {
+            return BadRequest(new { message = "Invalid hostname. Must be a valid hostname or IP address without option flags." });
+        }
+
+        if (!IsValidUsername(request.RsyncUser))
+        {
+            return BadRequest(new { message = "Invalid rsync user. Must contain only alphanumeric characters, dots, underscores or dashes." });
+        }
 
         // Create agent with rsync configuration (no token needed for rsync)
         var agent = new Agent
@@ -47,7 +61,7 @@ public class AgentController : ControllerBase
             token = null, // Token not needed for rsync-based agents
             rsyncUser = request.RsyncUser?.Trim(),
             rsyncPort = request.RsyncPort ?? 22,
-            rsyncSshKey = request.RsyncSshKey?.Trim()
+            rsyncSshKey = _secretProtection.Protect(request.RsyncSshKey?.Trim())
         };
 
         try
@@ -109,9 +123,14 @@ public class AgentController : ControllerBase
         try
         {
             // Check if required fields are present
-            if (string.IsNullOrWhiteSpace(request.Hostname))
+            if (string.IsNullOrWhiteSpace(request.Hostname) || !IsValidHostname(request.Hostname))
             {
-                return BadRequest(new { message = "Hostname is required" });
+                return BadRequest(new { message = "Valid hostname or IP is required without command flags." });
+            }
+
+            if (!IsValidUsername(request.RsyncUser))
+            {
+                return BadRequest(new { message = "Invalid rsync user." });
             }
 
             // Check if SSH key is configured
@@ -121,29 +140,42 @@ public class AgentController : ControllerBase
             }
 
             int port = (request.RsyncPort > 0) ? request.RsyncPort : 22;
-            var user = string.IsNullOrWhiteSpace(request.RsyncUser) ? "" : $"{request.RsyncUser}@";
+            var targetHost = string.IsNullOrWhiteSpace(request.RsyncUser)
+                ? request.Hostname.Trim()
+                : $"{request.RsyncUser.Trim()}@{request.Hostname.Trim()}";
 
             // Create temporary SSH key file
             string? tempSshKeyFile = null;
             try
             {
-                tempSshKeyFile = CreateTempSshKeyFile(request.RsyncSshKey);
+                var knownHostsFile = GetKnownHostsPath();
+                var unprotectKey = _secretProtection.Unprotect(request.RsyncSshKey) ?? request.RsyncSshKey;
+                tempSshKeyFile = CreateTempSshKeyFile(unprotectKey);
 
-                // Test SSH connection with a simple command (echo test)
-                var sshCommand = "echo 'SSH connection test successful'";
-                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{request.Hostname.Trim()} {sshCommand}";
-
-                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+                _logger.LogInformation("Validating SSH connection to {TargetHost}:{Port}", targetHost, port);
 
                 var processStartInfo = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "ssh",
-                    Arguments = sshArgs,
+                    UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    UseShellExecute = false,
                     CreateNoWindow = true
                 };
+
+                processStartInfo.ArgumentList.Add("-i");
+                processStartInfo.ArgumentList.Add(tempSshKeyFile);
+                processStartInfo.ArgumentList.Add("-p");
+                processStartInfo.ArgumentList.Add(port.ToString());
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsFile}");
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("ConnectTimeout=10");
+                processStartInfo.ArgumentList.Add(targetHost);
+                processStartInfo.ArgumentList.Add("echo");
+                processStartInfo.ArgumentList.Add("SSH connection test successful");
 
                 using var process = System.Diagnostics.Process.Start(processStartInfo);
                 if (process == null)
@@ -277,35 +309,53 @@ public class AgentController : ControllerBase
             }
 
             // Check if required fields are present
-            if (string.IsNullOrWhiteSpace(agent.hostname))
+            if (string.IsNullOrWhiteSpace(agent.hostname) || !IsValidHostname(agent.hostname))
             {
-                return BadRequest(new { message = "Agent hostname is required" });
+                return BadRequest(new { message = "Valid agent hostname is required without command flags." });
+            }
+
+            if (!IsValidUsername(agent.rsyncUser))
+            {
+                return BadRequest(new { message = "Invalid agent rsync user." });
             }
 
             int port = (agent.rsyncPort > 0) ? agent.rsyncPort : 22;
-            var user = string.IsNullOrWhiteSpace(agent.rsyncUser) ? "" : $"{agent.rsyncUser}@";
+            var targetHost = string.IsNullOrWhiteSpace(agent.rsyncUser)
+                ? agent.hostname.Trim()
+                : $"{agent.rsyncUser.Trim()}@{agent.hostname.Trim()}";
 
             // Create temporary SSH key file
             string? tempSshKeyFile = null;
             try
             {
-                tempSshKeyFile = CreateTempSshKeyFile(agent.rsyncSshKey);
+                var knownHostsFile = GetKnownHostsPath();
+                var unprotectKey = _secretProtection.Unprotect(agent.rsyncSshKey) ?? agent.rsyncSshKey;
+                tempSshKeyFile = CreateTempSshKeyFile(unprotectKey);
 
-                // Test SSH connection with a simple command (echo test)
-                var sshCommand = "echo 'SSH connection test successful'";
-                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {user}{agent.hostname} {sshCommand}";
-
-                _logger.LogInformation("Validating SSH connection: ssh {Args}", sshArgs);
+                _logger.LogInformation("Validating SSH connection for agent {AgentId} to {TargetHost}:{Port}", id, targetHost, port);
 
                 var processStartInfo = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "ssh",
-                    Arguments = sshArgs,
+                    UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    UseShellExecute = false,
                     CreateNoWindow = true
                 };
+
+                processStartInfo.ArgumentList.Add("-i");
+                processStartInfo.ArgumentList.Add(tempSshKeyFile);
+                processStartInfo.ArgumentList.Add("-p");
+                processStartInfo.ArgumentList.Add(port.ToString());
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsFile}");
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("ConnectTimeout=10");
+                processStartInfo.ArgumentList.Add(targetHost);
+                processStartInfo.ArgumentList.Add("echo");
+                processStartInfo.ArgumentList.Add("SSH connection test successful");
 
                 using var process = System.Diagnostics.Process.Start(processStartInfo);
                 if (process == null)
@@ -430,12 +480,13 @@ public class AgentController : ControllerBase
                 return NotFound(new { message = "Agent not found" });
             }
 
+            var rawKey = _secretProtection.Unprotect(agent.rsyncSshKey) ?? string.Empty;
             return Ok(new { 
                 id = agent.id,
                 name = agent.name,
                 hostname = agent.hostname,
-                rsyncSshKey = agent.rsyncSshKey ?? string.Empty,
-                hasSshKey = !string.IsNullOrWhiteSpace(agent.rsyncSshKey)
+                rsyncSshKey = rawKey,
+                hasSshKey = !string.IsNullOrWhiteSpace(rawKey)
             });
         }
         catch (Exception ex)
@@ -468,35 +519,50 @@ public class AgentController : ControllerBase
             // Default to root directory if not provided
             var directoryPath = string.IsNullOrWhiteSpace(dir) ? "/" : dir.Trim();
 
-            // Security check: prevent directory traversal attacks
-            if (directoryPath.Contains(".."))
+            // Security check: prevent directory traversal and command injection
+            if (!IsSafeDirectoryPath(directoryPath))
             {
                 _logger.LogWarning("Potentially unsafe directory path requested: {Path}", directoryPath);
-                return BadRequest(new { message = "Invalid directory path: directory traversal (..) is not allowed" });
+                return BadRequest(new { message = "Invalid directory path: directory traversal or special characters are not allowed" });
             }
 
             // Create temporary SSH key file
             string? tempSshKeyFile = null;
             try
             {
-                tempSshKeyFile = CreateTempSshKeyFile(agent.rsyncSshKey);
+                var knownHostsFile = GetKnownHostsPath();
+                var unprotectKey = _secretProtection.Unprotect(agent.rsyncSshKey) ?? agent.rsyncSshKey;
+                tempSshKeyFile = CreateTempSshKeyFile(unprotectKey);
 
-                // Build SSH command to list files
-                var user = string.IsNullOrWhiteSpace(agent.rsyncUser) ? "" : $"{agent.rsyncUser}@";
-                var sshCommand = $"ls -la --time-style=full-iso \"{directoryPath}\"";
-                var sshArgs = $"-i \"{tempSshKeyFile}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {user}{agent.hostname} {sshCommand}";
+                var targetHost = string.IsNullOrWhiteSpace(agent.rsyncUser)
+                    ? agent.hostname.Trim()
+                    : $"{agent.rsyncUser.Trim()}@{agent.hostname.Trim()}";
 
-                _logger.LogInformation("Executing SSH command: ssh {Args}", sshArgs);
+                _logger.LogInformation("Browsing agent file system via SSH on {TargetHost}:{Port} at path {Path}", targetHost, agent.rsyncPort, directoryPath);
 
                 var processStartInfo = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "ssh",
-                    Arguments = sshArgs,
+                    UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    UseShellExecute = false,
                     CreateNoWindow = true
                 };
+
+                processStartInfo.ArgumentList.Add("-i");
+                processStartInfo.ArgumentList.Add(tempSshKeyFile);
+                processStartInfo.ArgumentList.Add("-p");
+                processStartInfo.ArgumentList.Add(agent.rsyncPort.ToString());
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsFile}");
+                processStartInfo.ArgumentList.Add(targetHost);
+                processStartInfo.ArgumentList.Add("ls");
+                processStartInfo.ArgumentList.Add("-la");
+                processStartInfo.ArgumentList.Add("--time-style=full-iso");
+                processStartInfo.ArgumentList.Add("--");
+                processStartInfo.ArgumentList.Add(directoryPath);
 
                 using var process = System.Diagnostics.Process.Start(processStartInfo);
                 if (process == null)
@@ -768,9 +834,14 @@ public class AgentController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateAgent(Guid id, [FromBody] UpdateAgentRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Hostname))
+        if (string.IsNullOrWhiteSpace(request.Hostname) || !IsValidHostname(request.Hostname))
         {
-            return BadRequest(new { message = "Hostname is required" });
+            return BadRequest(new { message = "Valid hostname is required without command flags." });
+        }
+
+        if (request.RsyncUser != null && !IsValidUsername(request.RsyncUser))
+        {
+            return BadRequest(new { message = "Invalid rsync user." });
         }
 
         try
@@ -800,7 +871,7 @@ public class AgentController : ControllerBase
             }
             if (request.RsyncSshKey != null)
             {
-                agent.rsyncSshKey = request.RsyncSshKey.Trim();
+                agent.rsyncSshKey = _secretProtection.Protect(request.RsyncSshKey.Trim());
             }
 
             await _context.SaveChangesAsync();
@@ -856,6 +927,48 @@ public class AgentController : ControllerBase
             _logger.LogError(ex, "Error deleting agent {AgentId}", id);
             return StatusCode(500, new { message = "An error occurred while deleting the agent" });
         }
+    }
+
+    private string GetKnownHostsPath()
+    {
+        var dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "data");
+        if (!Directory.Exists(dataDirectory))
+        {
+            Directory.CreateDirectory(dataDirectory);
+        }
+        var knownHostsPath = Path.Combine(dataDirectory, "known_hosts");
+        if (!System.IO.File.Exists(knownHostsPath))
+        {
+            System.IO.File.WriteAllText(knownHostsPath, string.Empty);
+        }
+        return knownHostsPath;
+    }
+
+    private static bool IsValidHostname(string? hostname)
+    {
+        if (string.IsNullOrWhiteSpace(hostname) || hostname.Length > 255 || hostname.Trim().StartsWith("-"))
+            return false;
+        var trimmed = hostname.Trim();
+        return System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[a-zA-Z0-9.-]+$") ||
+               System.Net.IPAddress.TryParse(trimmed, out _);
+    }
+
+    private static bool IsValidUsername(string? username)
+    {
+        if (string.IsNullOrWhiteSpace(username))
+            return true;
+        var trimmed = username.Trim();
+        return System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[a-zA-Z0-9._-]+$") && !trimmed.StartsWith("-");
+    }
+
+    private static bool IsSafeDirectoryPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Contains(".."))
+            return false;
+        char[] dangerousChars = { ';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r', '\0', '\\' };
+        if (path.IndexOfAny(dangerousChars) >= 0)
+            return false;
+        return path.StartsWith("/") || (OperatingSystem.IsWindows() && path.Length >= 2 && path[1] == ':');
     }
 
     public class CreateAgentRequest

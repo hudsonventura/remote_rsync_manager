@@ -15,5 +15,6 @@ public class User
     public bool isActive { get; set; } = true;
     public string? timezone { get; set; }
     public string? theme { get; set; }
+    public string securityStamp { get; set; } = Guid.NewGuid().ToString();
 }
 

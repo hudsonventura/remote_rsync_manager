@@ -28,19 +28,22 @@ public class FileSystemController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult BrowseDirectory([FromQuery] string? dir)
     {
-        // Determine default root path based on OS
-        string defaultRoot;
-        if (OperatingSystem.IsWindows())
+        var allowedRoots = GetAllowedRoots();
+
+        // Determine default path: if dir is not provided or asks for root, point to first available allowed root
+        string directoryPath;
+        if (string.IsNullOrWhiteSpace(dir) || dir == "/" || dir == "C:\\" || dir == "\\")
         {
-            defaultRoot = "C:\\";
+            directoryPath = allowedRoots.FirstOrDefault(Directory.Exists) ?? allowedRoots[0];
+            if (!Directory.Exists(directoryPath))
+            {
+                try { Directory.CreateDirectory(directoryPath); } catch { }
+            }
         }
         else
         {
-            defaultRoot = "/";
+            directoryPath = dir.Trim();
         }
-
-        // Default to root if not provided
-        var directoryPath = string.IsNullOrWhiteSpace(dir) ? defaultRoot : dir.Trim();
 
         try
         {
@@ -51,12 +54,27 @@ public class FileSystemController : ControllerBase
                 return BadRequest(new { message = "Invalid directory path: directory traversal (..) is not allowed" });
             }
 
-            // Check if directory exists
-            if (!Directory.Exists(directoryPath))
+            var fullPath = Path.GetFullPath(directoryPath);
+
+            // Scope check: must be inside one of the allowed storage roots
+            bool isAllowed = allowedRoots.Any(root => 
+                fullPath.Equals(root, StringComparison.OrdinalIgnoreCase) || 
+                fullPath.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+            if (!isAllowed)
             {
-                _logger.LogWarning("Directory not found: {Path}", directoryPath);
-                return NotFound(new { message = $"Directory not found: {directoryPath}" });
+                _logger.LogWarning("Access denied to directory outside allowed roots: {Path}", fullPath);
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Access denied: browsing is restricted to storage paths (/store, /host, data)." });
             }
+
+            // Check if directory exists
+            if (!Directory.Exists(fullPath))
+            {
+                _logger.LogWarning("Directory not found: {Path}", fullPath);
+                return NotFound(new { message = $"Directory not found: {fullPath}" });
+            }
+
+            directoryPath = fullPath;
 
             // Get directory info
             var directoryInfo = new DirectoryInfo(directoryPath);
@@ -186,57 +204,162 @@ public class FileSystemController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Create a new directory within allowed storage paths
+    /// </summary>
+    [HttpPost("create-directory")]
+    [HttpPost("directory")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public IActionResult CreateDirectory([FromBody] CreateDirectoryRequest request)
+    {
+        if (request == null)
+        {
+            return BadRequest(new { message = "Request body is required" });
+        }
+
+        string targetPath;
+        if (!string.IsNullOrWhiteSpace(request.Path))
+        {
+            targetPath = request.Path.Trim();
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(request.DirectoryName))
+            {
+                return BadRequest(new { message = "Directory name is required" });
+            }
+
+            var dirName = request.DirectoryName.Trim();
+            if (dirName.Contains('/') || dirName.Contains('\\') || dirName.Contains(".."))
+            {
+                return BadRequest(new { message = "Directory name contains invalid path traversal characters" });
+            }
+
+            if (dirName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                return BadRequest(new { message = "Directory name contains invalid characters" });
+            }
+
+            var allowedRoots = GetAllowedRoots();
+            string parentDirectory;
+            if (string.IsNullOrWhiteSpace(request.ParentPath) || request.ParentPath == "/" || request.ParentPath == "C:\\" || request.ParentPath == "\\")
+            {
+                parentDirectory = allowedRoots.FirstOrDefault(Directory.Exists) ?? allowedRoots[0];
+            }
+            else
+            {
+                parentDirectory = request.ParentPath.Trim();
+            }
+
+            targetPath = Path.Combine(parentDirectory, dirName);
+        }
+
+        try
+        {
+            if (targetPath.Contains(".."))
+            {
+                _logger.LogWarning("Potentially unsafe directory creation requested: {Path}", targetPath);
+                return BadRequest(new { message = "Invalid directory path: directory traversal (..) is not allowed" });
+            }
+
+            var fullPath = Path.GetFullPath(targetPath);
+            var allowedRoots = GetAllowedRoots();
+
+            // Scope check: must be inside one of the allowed storage roots
+            bool isAllowed = allowedRoots.Any(root =>
+                fullPath.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+                fullPath.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+            if (!isAllowed)
+            {
+                _logger.LogWarning("Access denied creating directory outside allowed roots: {Path}", fullPath);
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Access denied: creating directories is restricted to storage paths (/store, /host, data)." });
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                return Conflict(new { message = $"Directory already exists: {fullPath}" });
+            }
+
+            var parent = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent))
+            {
+                return BadRequest(new { message = $"Parent directory does not exist: {parent}" });
+            }
+
+            Directory.CreateDirectory(fullPath);
+            _logger.LogInformation("Directory created successfully: {Path}", fullPath);
+
+            var dirInfo = new DirectoryInfo(fullPath);
+            return Ok(new
+            {
+                success = true,
+                message = "Directory created successfully",
+                name = dirInfo.Name,
+                pathName = dirInfo.FullName,
+                type = "directory",
+                lastModified = dirInfo.LastWriteTimeUtc.ToString("o")
+            });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Permission denied creating directory: {Path}", targetPath);
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Permission denied: unable to create directory." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating directory: {Path}", targetPath);
+            return StatusCode(500, new { message = $"An error occurred while creating directory: {ex.Message}" });
+        }
+    }
+
+    private List<string> GetAllowedRoots()
+    {
+        var roots = new List<string>();
+        var dataDirectory = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "data"));
+        roots.Add(dataDirectory);
+
+        var storeEnv = Environment.GetEnvironmentVariable("STORE_PATH") ?? "/store";
+        try
+        {
+            if (Directory.Exists(storeEnv)) roots.Add(Path.GetFullPath(storeEnv));
+            else if (Directory.Exists("/store")) roots.Add("/store");
+        }
+        catch { }
+
+        var hostEnv = Environment.GetEnvironmentVariable("HOST_PATH") ?? "/host";
+        try
+        {
+            if (Directory.Exists(hostEnv)) roots.Add(Path.GetFullPath(hostEnv));
+            else if (Directory.Exists("/host")) roots.Add("/host");
+        }
+        catch { }
+
+        var localStore = Path.Combine(dataDirectory, "store");
+        if (!roots.Contains(localStore)) roots.Add(localStore);
+        var localHost = Path.Combine(dataDirectory, "host");
+        if (!roots.Contains(localHost)) roots.Add(localHost);
+
+        return roots;
+    }
+
     private string? GetUnixPermissions(string path)
     {
         try
         {
-            // On Unix-like systems, get file permissions using stat command
             if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             {
-                return GetUnixPermissionsViaStat(path);
+                var mode = System.IO.File.GetUnixFileMode(path);
+                int octal = ((int)mode) & 0x1FF;
+                return Convert.ToString(octal, 8).PadLeft(3, '0');
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error getting Unix permissions for: {Path}", path);
-        }
-        return null;
-    }
-
-    private string? GetUnixPermissionsViaStat(string path)
-    {
-        try
-        {
-            var processStartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "stat",
-                Arguments = $"-c %a \"{path}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = System.Diagnostics.Process.Start(processStartInfo);
-            if (process == null)
-                return null;
-
-            process.WaitForExit(1000); // 1 second timeout
-
-            if (process.ExitCode == 0)
-            {
-                var output = process.StandardOutput.ReadToEnd().Trim();
-                // stat returns 4 digits sometimes (e.g., "0755"), we want 3 digits
-                if (output.Length >= 3)
-                {
-                    return output.Substring(output.Length - 3);
-                }
-                return output;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error getting Unix permissions via stat for: {Path}", path);
         }
         return null;
     }

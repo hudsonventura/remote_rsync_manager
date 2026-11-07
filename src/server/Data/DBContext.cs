@@ -25,6 +25,8 @@ public class DBContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+
         if (!optionsBuilder.IsConfigured && _configuration != null)
         {
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -101,6 +103,7 @@ public class DBContext : DbContext
             entity.Property(e => e.createdAt).IsRequired();
             entity.Property(e => e.timezone).HasMaxLength(100);
             entity.Property(e => e.theme).HasMaxLength(50);
+            entity.Property(e => e.securityStamp).HasMaxLength(100);
 
             // Create unique index on username and email
             entity.HasIndex(e => e.username).IsUnique();
