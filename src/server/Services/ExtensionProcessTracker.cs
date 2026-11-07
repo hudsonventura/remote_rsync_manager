@@ -8,12 +8,13 @@ public class ExtensionProcessTracker
 {
     private readonly ConcurrentDictionary<Guid, RunningExecutionState> _running = new();
 
-    public void Register(Guid executionId, Guid extensionId, Process process, CancellationTokenSource cts, StringBuilder outputBuilder)
+    public void Register(Guid executionId, Guid extensionId, Process process, int processId, CancellationTokenSource cts, StringBuilder outputBuilder)
     {
         _running[executionId] = new RunningExecutionState
         {
             ExecutionId = executionId,
             ExtensionId = extensionId,
+            ProcessId = processId,
             Process = process,
             Cts = cts,
             OutputBuilder = outputBuilder,
@@ -54,16 +55,17 @@ public class ExtensionProcessTracker
         {
             try
             {
+                // Kill process tree first using OS kill and process.Kill BEFORE cancelling CTS
+                ProcessHelper.KillProcessTree(state.Process, state.ProcessId);
                 state.Cts.Cancel();
-                if (!state.Process.HasExited)
-                {
-                    state.Process.Kill(entireProcessTree: true);
-                }
                 return true;
             }
             catch
             {
-                return false;
+                // Fallback: kill by PID directly
+                ProcessHelper.KillProcessTree(null, state.ProcessId);
+                state.Cts.Cancel();
+                return true;
             }
         }
         return false;
@@ -83,6 +85,7 @@ public class ExtensionProcessTracker
     {
         public Guid ExecutionId { get; set; }
         public Guid ExtensionId { get; set; }
+        public int ProcessId { get; set; }
         public required Process Process { get; set; }
         public required CancellationTokenSource Cts { get; set; }
         public required StringBuilder OutputBuilder { get; set; }

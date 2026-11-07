@@ -143,6 +143,7 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
 
     // Get or create certificate configuration
     var certConfig = dbContext.CertificateConfigs.FirstOrDefault();
+    var expectedCertPath = Path.Combine(dataDirectory, "server.pfx");
 
     if (certConfig == null)
     {
@@ -156,11 +157,10 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
 
         // Generate certificate path
         Console.WriteLine($"Generating certificate path: {dataDirectory}");
-        var certPath = Path.Combine(dataDirectory, "server.pfx");
-        Console.WriteLine($"Certificate path: {certPath}");
+        Console.WriteLine($"Certificate path: {expectedCertPath}");
         certConfig = new CertificateConfig
         {
-            certificatePath = certPath,
+            certificatePath = expectedCertPath,
             certificatePassword = password,
             created_at = DateTime.UtcNow,
             updated_at = DateTime.UtcNow
@@ -169,7 +169,15 @@ using (var dbContext = new DBContext(new DbContextOptionsBuilder<DBContext>()
         dbContext.CertificateConfigs.Add(certConfig);
         dbContext.SaveChanges();
 
-        Console.WriteLine($"Certificate configuration created. Path: {certPath}");
+        Console.WriteLine($"Certificate configuration created. Path: {expectedCertPath}");
+    }
+    else if (certConfig.certificatePath != expectedCertPath)
+    {
+        // Path in database may come from host or different environment. Reconcile to current environment.
+        Console.WriteLine($"Reconciling certificate path from '{certConfig.certificatePath}' to '{expectedCertPath}' for current environment.");
+        certConfig.certificatePath = expectedCertPath;
+        certConfig.updated_at = DateTime.UtcNow;
+        dbContext.SaveChanges();
     }
 
     // Generate self-signed certificate if it doesn't exist

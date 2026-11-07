@@ -30,9 +30,9 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# Install Node.js, OpenSSH client, and rsync for running client dev server and rsync/SSH operations
+# Install Node.js, OpenSSH client, rsync, and procps (ps, pkill, kill) for process management
 RUN apt-get update && \
-    apt-get install -y curl openssh-client rsync && \
+    apt-get install -y curl openssh-client rsync procps && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \

@@ -502,7 +502,27 @@ public class ExtensionController : ControllerBase
         }
 
         var stopped = _tracker.StopExtension(id);
-        if (stopped)
+
+        // Also clean up any lingering 'Running' executions in database
+        var runningExecs = await _logContext.ExtensionExecutions
+            .Where(e => e.extensionId == id && e.status == "Running")
+            .ToListAsync();
+
+        if (runningExecs.Count > 0)
+        {
+            foreach (var exec in runningExecs)
+            {
+                exec.status = "Stopped";
+                exec.endDateTime = DateTime.UtcNow;
+                exec.output += "\n[ABORTED] Manually stopped by user.";
+            }
+            extension.lastStatus = "Stopped";
+            extension.updatedAt = DateTime.UtcNow;
+            await _logContext.SaveChangesAsync();
+            await _context.SaveChangesAsync();
+        }
+
+        if (stopped || runningExecs.Count > 0)
         {
             _logger.LogInformation("Process termination requested for extension '{Name}' ({Id})", extension.name, id);
             return Ok(new { message = "Process termination signal sent successfully." });
@@ -513,9 +533,28 @@ public class ExtensionController : ControllerBase
 
     [HttpPost("{id}/executions/{executionId}/stop")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult StopExecution(Guid id, Guid executionId)
+    public async Task<IActionResult> StopExecution(Guid id, Guid executionId)
     {
         var stopped = _tracker.StopExecution(executionId);
+
+        var exec = await _logContext.ExtensionExecutions.FindAsync(executionId);
+        if (exec != null && exec.status == "Running")
+        {
+            exec.status = "Stopped";
+            exec.endDateTime = DateTime.UtcNow;
+            exec.output += "\n[ABORTED] Manually stopped by user.";
+            await _logContext.SaveChangesAsync();
+
+            var ext = await _context.Extensions.FindAsync(id);
+            if (ext != null && ext.lastStatus == "Running")
+            {
+                ext.lastStatus = "Stopped";
+                ext.updatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+            return Ok(new { message = "Process termination signal sent successfully." });
+        }
+
         if (stopped)
         {
             _logger.LogInformation("Process termination requested for execution {ExecutionId}", executionId);

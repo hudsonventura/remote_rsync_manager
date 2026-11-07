@@ -1,0 +1,6 @@
+services:
+  server:
+    volumes:
+      - /mnt/Documents:/host/documents
+      - /mnt/Downloads:/host/downloads
+      - /mnt/Onedrive:/host/onedrive

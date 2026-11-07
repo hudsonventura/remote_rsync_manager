@@ -188,10 +188,16 @@ A modern web-based graphical interface and orchestrator for centralizing remote 
   ```
 
 ### Docker
-- **Build and start services:**
+- **Start services (with optional override support):**
   ```bash
-  docker compose up -d --build
+  ./docker-compose-up.sh
   ```
+- **Stop services:**
+  ```bash
+  ./docker-compose-down.sh
+  ```
+- **Custom storage volumes:**
+  Copy `docker-compose-override.example.yml` to `docker-compose-override.yml` to add custom volume mounts (mapped under `/host/`).
 - **Follow logs:**
   ```bash
   docker compose logs -f

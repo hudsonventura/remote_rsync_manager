@@ -17,3 +17,5 @@ HTTPTests/environments/PROD.bru
 #extension-example
 extension-example/bin/*
 extension-example/obj/*
+docker-compose-override.yml
+docker-compose.override.yml

@@ -30,32 +30,40 @@ This system centralizes backups using Rsync from multiple sources (agents). Itâ€
 
 ### Server Installation 
 
-#### Step 1: Get the files and Start the Server
+#### Step 1: Get the files, Configure Volumes, and Start the Server
 
-You can clone the repository:
+1. Clone the repository:
 ```bash
 git clone https://github.com/hudsonventura/remote_rsync_manager.git &&
-cd remote_rsync_manager &&
-sudo docker compose up -d
+cd remote_rsync_manager
 ```
 
-or copy the content of `docker-compose.yml`, from [here](https://github.com/hudsonventura/remote_rsync_manager/blob/main/docker-compose.yml), on your computer and run:
+2. **Configure custom storage volumes (Optional):**  
+To map your storage directories (such as ZFS pools or external disks) into the container, you can create a `docker-compose-override.yml` file. An example file `docker-compose-override.example.yml` is provided:
 ```bash
-sudo docker-compose up -d
+cp docker-compose-override.example.yml docker-compose-override.yml
 ```
 
-
-This will:
-- Download the server image from Docker Hub
-- Start the server container
-- Create necessary data directories
-- Initialize the database
-
-
-
+Edit `docker-compose-override.yml` to specify any volumes you wish to mount:
+```yaml
+services:
+  server:
+    volumes:
+      - /mnt/Documents:/host/documents
+      - /mnt/Downloads:/host/downloads
+      - /mnt/Onedrive:/host/onedrive
 ```
- volumes:
-      - /path/your/files:/host
+
+3. **Start the system:**  
+Use the provided helper script, which automatically detects and loads your `docker-compose-override.yml` file:
+```bash
+sudo chmod +x ./docker-compose-up.sh && ./docker-compose-up.sh
+```
+
+4. **Stop the system:**  
+To stop the server containers cleanly, run:
+```bash
+sudo ./docker-compose-down.sh
 ```
 
 

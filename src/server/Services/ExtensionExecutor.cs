@@ -60,13 +60,16 @@ public class ExtensionExecutor
         var outputBuilder = new StringBuilder();
         int exitCode = -1;
         string finalStatus = "Failed";
+        Process? process = null;
+        int processId = 0;
 
         try
         {
             var dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "data");
-            var folder = !string.IsNullOrWhiteSpace(extension.folderPath) && Path.IsPathRooted(extension.folderPath)
+            var defaultExtensionFolder = Path.Combine(dataDirectory, "extensions", extension.id.ToString());
+            var folder = (!string.IsNullOrWhiteSpace(extension.folderPath) && Directory.Exists(extension.folderPath))
                 ? extension.folderPath
-                : Path.Combine(dataDirectory, "extensions", extension.id.ToString());
+                : defaultExtensionFolder;
 
             if (!Directory.Exists(folder))
             {
@@ -131,7 +134,7 @@ public class ExtensionExecutor
                 }
             }
 
-            using var process = new Process { StartInfo = startInfo };
+            process = new Process { StartInfo = startInfo };
 
             process.OutputDataReceived += (sender, args) =>
             {
@@ -159,11 +162,13 @@ public class ExtensionExecutor
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
+            try { processId = process.Id; } catch { }
+
             // Set a 30-minute timeout for execution
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
-            _tracker.Register(executionId, extension.id, process, linkedCts, outputBuilder);
+            _tracker.Register(executionId, extension.id, process, processId, linkedCts, outputBuilder);
 
             // Periodic database flush task to keep logs in DB reasonably fresh
             using var flushCts = new CancellationTokenSource();
@@ -215,6 +220,9 @@ public class ExtensionExecutor
         {
             finalStatus = "Stopped";
             exitCode = -1;
+
+            ProcessHelper.KillProcessTree(process, processId, _logger);
+
             lock (outputBuilder)
             {
                 outputBuilder.AppendLine("[ABORTED] Execution was cancelled or manually stopped.");
@@ -225,6 +233,9 @@ public class ExtensionExecutor
         {
             finalStatus = "Failed";
             exitCode = -1;
+
+            ProcessHelper.KillProcessTree(process, processId, _logger);
+
             lock (outputBuilder)
             {
                 outputBuilder.AppendLine($"[EXCEPTION] {ex.Message}");
@@ -237,7 +248,13 @@ public class ExtensionExecutor
         }
         finally
         {
+            if (finalStatus != "Success")
+            {
+                ProcessHelper.KillProcessTree(process, processId, _logger);
+            }
+
             _tracker.Unregister(executionId);
+            process?.Dispose();
 
             var endTime = DateTime.UtcNow;
 
