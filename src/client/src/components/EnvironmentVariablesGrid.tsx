@@ -3,9 +3,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Plus, Trash2, Eye, EyeOff, KeyRound } from "lucide-react"
 
+export type EnvVarType = "text" | "secret"
+
 export interface EnvVar {
   key: string
   value: string
+  type?: EnvVarType
   isSecret?: boolean
 }
 
@@ -23,7 +26,7 @@ export function EnvironmentVariablesGrid({
   const [visibleValues, setVisibleValues] = useState<Record<number, boolean>>({})
 
   const handleAdd = () => {
-    onChange([...variables, { key: "", value: "", isSecret: false }])
+    onChange([...variables, { key: "", value: "", type: "text", isSecret: false }])
   }
 
   const handleRemove = (index: number) => {
@@ -33,8 +36,17 @@ export function EnvironmentVariablesGrid({
 
   const handleChangeKey = (index: number, key: string) => {
     const updated = [...variables]
-    // Clean key: remove whitespace
     updated[index] = { ...updated[index], key }
+    onChange(updated)
+  }
+
+  const handleChangeType = (index: number, type: EnvVarType) => {
+    const updated = [...variables]
+    updated[index] = {
+      ...updated[index],
+      type,
+      isSecret: type === "secret",
+    }
     onChange(updated)
   }
 
@@ -107,17 +119,19 @@ export function EnvironmentVariablesGrid({
       ) : (
         <div className="space-y-2">
           <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-muted-foreground uppercase px-1">
-            <div className="col-span-5">Name (Key)</div>
-            <div className="col-span-6">Value</div>
+            <div className="col-span-4 sm:col-span-4">Name (Key)</div>
+            <div className="col-span-3 sm:col-span-2">Type</div>
+            <div className="col-span-4 sm:col-span-5">Value</div>
             <div className="col-span-1 text-center">Action</div>
           </div>
 
           {variables.map((v, index) => {
+            const isSecret = (v.type ?? (v.isSecret ? "secret" : "text")) === "secret"
             const isVisible = visibleValues[index] ?? false
 
             return (
               <div key={index} className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-5">
+                <div className="col-span-4 sm:col-span-4">
                   <Input
                     placeholder="e.g. DATABASE_URL"
                     value={v.key}
@@ -127,28 +141,54 @@ export function EnvironmentVariablesGrid({
                   />
                 </div>
 
-                <div className="col-span-6 relative">
-                  <Input
-                    type={isVisible ? "text" : "password"}
-                    placeholder="Value..."
-                    value={v.value}
-                    onChange={(e) => handleChangeValue(index, e.target.value)}
+                <div className="col-span-3 sm:col-span-2">
+                  <select
+                    value={isSecret ? "secret" : "text"}
+                    onChange={(e) => handleChangeType(index, e.target.value as EnvVarType)}
                     disabled={disabled}
-                    className="font-mono text-xs pr-9"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(index)}
-                    disabled={disabled}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    title={isVisible ? "Hide value" : "Show value"}
+                    aria-label={`Tipo da variável ${v.key || index + 1}`}
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                   >
-                    {isVisible ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                  </button>
+                    <option value="text">Texto</option>
+                    <option value="secret">Secret</option>
+                  </select>
+                </div>
+
+                <div className="col-span-4 sm:col-span-5">
+                  {isSecret ? (
+                    <div className="relative">
+                      <Input
+                        type={isVisible ? "text" : "password"}
+                        placeholder="Secret value..."
+                        value={v.value}
+                        onChange={(e) => handleChangeValue(index, e.target.value)}
+                        disabled={disabled}
+                        className="font-mono text-xs pr-9"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleVisibility(index)}
+                        disabled={disabled}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                        title={isVisible ? "Hide secret" : "Show secret"}
+                      >
+                        {isVisible ? (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Eye className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <Input
+                      type="text"
+                      placeholder="Value..."
+                      value={v.value}
+                      onChange={(e) => handleChangeValue(index, e.target.value)}
+                      disabled={disabled}
+                      className="font-mono text-xs"
+                    />
+                  )}
                 </div>
 
                 <div className="col-span-1 flex justify-center">

@@ -40,17 +40,22 @@ export function EditExtension() {
             const parsed = JSON.parse(ext.environmentVariables)
             if (Array.isArray(parsed)) {
               setEnvVars(
-                parsed.map((item: any) => ({
-                  key: item.key || item.Key || "",
-                  value: item.value || item.Value || "",
-                  isSecret: false,
-                }))
+                parsed.map((item: any) => {
+                  const type = item.type === "secret" || item.isSecret === true ? "secret" : "text"
+                  return {
+                    key: item.key || item.Key || "",
+                    value: item.value || item.Value || "",
+                    type,
+                    isSecret: type === "secret",
+                  }
+                })
               )
             } else if (typeof parsed === "object" && parsed !== null) {
               setEnvVars(
                 Object.entries(parsed).map(([key, value]) => ({
                   key,
                   value: String(value),
+                  type: "text",
                   isSecret: false,
                 }))
               )
@@ -114,7 +119,15 @@ export function EditExtension() {
       formData.append("active", active.toString())
 
       const validEnvVars = envVars
-        .map((v) => ({ key: v.key.trim(), value: v.value }))
+        .map((v) => {
+          const type = v.type ?? (v.isSecret ? "secret" : "text")
+          return {
+            key: v.key.trim(),
+            value: v.value,
+            type,
+            isSecret: type === "secret",
+          }
+        })
         .filter((v) => v.key.length > 0)
       formData.append("environmentVariables", JSON.stringify(validEnvVars))
 

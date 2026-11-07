@@ -71,7 +71,15 @@ export function AddExtension() {
       formData.append("zipFile", selectedFile)
 
       const validEnvVars = envVars
-        .map((v) => ({ key: v.key.trim(), value: v.value }))
+        .map((v) => {
+          const type = v.type ?? (v.isSecret ? "secret" : "text")
+          return {
+            key: v.key.trim(),
+            value: v.value,
+            type,
+            isSecret: type === "secret",
+          }
+        })
         .filter((v) => v.key.length > 0)
       if (validEnvVars.length > 0) {
         formData.append("environmentVariables", JSON.stringify(validEnvVars))

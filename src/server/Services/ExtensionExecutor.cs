@@ -336,6 +336,8 @@ public class ExtensionExecutor
     {
         public string key { get; set; } = string.Empty;
         public string value { get; set; } = string.Empty;
+        public string? type { get; set; }
+        public bool? isSecret { get; set; }
     }
 
     private static string ResolveStorePath(string dataDirectory)
