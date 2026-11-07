@@ -315,6 +315,57 @@ namespace server.Migrations.DBContext
                     b.ToTable("user");
                 });
 
+            modelBuilder.Entity("server.Models.Extension", b =>
+                {
+                    b.Property<Guid>("id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("active")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("command")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("createdAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("environmentVariables")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("folderPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("lastExitCode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("lastRunAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("lastStatus")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("schedule")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("updatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("id");
+
+                    b.ToTable("extension");
+                });
+
             modelBuilder.Entity("server.Models.BackupPlan", b =>
                 {
                     b.HasOne("server.Models.Agent", "agent")

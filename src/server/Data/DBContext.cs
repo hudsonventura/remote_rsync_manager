@@ -41,6 +41,7 @@ public class DBContext : DbContext
     public DbSet<Notification> Notifications { get; set; } = null!;
     public DbSet<User> Users { get; set; } = null!;
     public DbSet<TelegramConfig> TelegramConfigs { get; set; } = null!;
+    public DbSet<Extension> Extensions { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

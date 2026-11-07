@@ -1,5 +1,7 @@
 <Solution>
+  <Folder Name="/extension-example/" />
   <Folder Name="/src/">
     <Project Path="src/server/server.csproj" />
   </Folder>
+  <Project Path="extension-example/extension-example.csproj" />
 </Solution>

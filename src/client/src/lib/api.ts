@@ -23,9 +23,11 @@ function getAuthToken(): string | null {
 /**
  * Get default headers for API requests
  */
-function getDefaultHeaders(): HeadersInit {
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
+function getDefaultHeaders(isFormData?: boolean): HeadersInit {
+  const headers: Record<string, string> = {}
+
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json"
   }
 
   const token = getAuthToken()
@@ -52,10 +54,13 @@ export async function apiRequest<T = any>(
       ? `${API_URL}${endpoint}` 
       : endpoint
   
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData
+  const defaultHeaders = getDefaultHeaders(isFormData)
+
   const response = await fetch(url, {
     ...options,
     headers: {
-      ...getDefaultHeaders(),
+      ...defaultHeaders,
       ...options.headers,
     },
   })
@@ -117,5 +122,25 @@ export async function apiPut<T = any>(endpoint: string, data?: any): Promise<T> 
  */
 export async function apiDelete<T = any>(endpoint: string): Promise<T> {
   return apiRequest<T>(endpoint, { method: "DELETE" })
+}
+
+/**
+ * POST FormData request helper (for file uploads)
+ */
+export async function apiPostForm<T = any>(endpoint: string, formData: FormData): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: "POST",
+    body: formData,
+  })
+}
+
+/**
+ * PUT FormData request helper (for file updates)
+ */
+export async function apiPutForm<T = any>(endpoint: string, formData: FormData): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: "PUT",
+    body: formData,
+  })
 }
 

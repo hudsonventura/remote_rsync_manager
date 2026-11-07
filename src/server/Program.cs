@@ -342,6 +342,8 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddSingleton<ITokenStore, TokenStore>();
 builder.Services.AddScoped<BackupPlanExecutor>();
+builder.Services.AddSingleton<ExtensionProcessTracker>();
+builder.Services.AddScoped<ExtensionExecutor>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ITelegramService, TelegramService>();
 builder.Services.AddSingleton<TerminalService>();
@@ -356,6 +358,7 @@ builder.Services.AddSignalR(options =>
 
 // Register hosted services
 builder.Services.AddHostedService<BackupRunner>();
+builder.Services.AddHostedService<ExtensionRunner>();
 builder.Services.AddHostedService<LogRetentionService>();
 builder.Services.AddHostedService<TelegramHostedService>();
 

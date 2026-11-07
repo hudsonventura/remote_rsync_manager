@@ -15,6 +15,10 @@ import { BackupLogs } from "@/pages/BackupLogs"
 import { AllLogs } from "@/pages/AllLogs"
 import { About } from "@/pages/About"
 import { Users } from "@/pages/Users"
+import { ExtensionsList } from "@/pages/ExtensionsList"
+import { AddExtension } from "@/pages/AddExtension"
+import { EditExtension } from "@/pages/EditExtension"
+import { ExtensionLogs } from "@/pages/ExtensionLogs"
 
 function App() {
   return (
@@ -34,6 +38,10 @@ function App() {
           <Route path="/backup-plans/:planId/edit" element={<EditBackupPlan />} />
           <Route path="/backup-plans/:planId/logs" element={<BackupLogs />} />
           <Route path="/backup-plans/:planId/logs/:executionId" element={<BackupLogs />} />
+          <Route path="/extensions" element={<ExtensionsList />} />
+          <Route path="/extensions/add" element={<AddExtension />} />
+          <Route path="/extensions/:id/edit" element={<EditExtension />} />
+          <Route path="/extensions/:id/logs" element={<ExtensionLogs />} />
           <Route path="/logs" element={<AllLogs />} />
           <Route path="/logs/:executionId" element={<AllLogs />} />
           <Route path="/profile" element={<Profile />} />

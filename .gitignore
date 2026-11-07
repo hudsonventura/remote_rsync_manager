@@ -13,3 +13,7 @@ src/server/bin/*
 # Data directory
 data/
 HTTPTests/environments/PROD.bru
+
+#extension-example
+extension-example/bin/*
+extension-example/obj/*

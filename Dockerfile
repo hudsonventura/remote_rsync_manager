@@ -38,8 +38,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Create directory for databases and static files
-RUN mkdir -p /app/data /app/wwwroot
+# Create directory for databases, static files, and external mounts
+RUN mkdir -p /app/data /app/wwwroot /store /host
 
 # Copy published server
 COPY --from=server-publish /app/publish .
