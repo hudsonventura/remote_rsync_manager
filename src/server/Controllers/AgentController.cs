@@ -168,6 +168,8 @@ public class AgentController : ControllerBase
                 processStartInfo.ArgumentList.Add("-p");
                 processStartInfo.ArgumentList.Add(port.ToString());
                 processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("BatchMode=yes");
+                processStartInfo.ArgumentList.Add("-o");
                 processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
                 processStartInfo.ArgumentList.Add("-o");
                 processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsFile}");
@@ -347,6 +349,8 @@ public class AgentController : ControllerBase
                 processStartInfo.ArgumentList.Add(tempSshKeyFile);
                 processStartInfo.ArgumentList.Add("-p");
                 processStartInfo.ArgumentList.Add(port.ToString());
+                processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("BatchMode=yes");
                 processStartInfo.ArgumentList.Add("-o");
                 processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
                 processStartInfo.ArgumentList.Add("-o");
@@ -554,6 +558,8 @@ public class AgentController : ControllerBase
                 processStartInfo.ArgumentList.Add("-p");
                 processStartInfo.ArgumentList.Add(agent.rsyncPort.ToString());
                 processStartInfo.ArgumentList.Add("-o");
+                processStartInfo.ArgumentList.Add("BatchMode=yes");
+                processStartInfo.ArgumentList.Add("-o");
                 processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
                 processStartInfo.ArgumentList.Add("-o");
                 processStartInfo.ArgumentList.Add($"UserKnownHostsFile={knownHostsFile}");
@@ -662,6 +668,15 @@ public class AgentController : ControllerBase
             // Set proper permissions (600) on Unix-like systems
             if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             {
+                try
+                {
+                    System.IO.File.SetUnixFileMode(tempKeyFile, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to set Unix file mode on temporary SSH key file");
+                }
+
                 try
                 {
                     var processStartInfo = new System.Diagnostics.ProcessStartInfo

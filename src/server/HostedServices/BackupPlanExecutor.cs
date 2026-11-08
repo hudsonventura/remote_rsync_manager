@@ -184,7 +184,7 @@ public class BackupPlanExecutor
             processStartInfo.ArgumentList.Add("--stats");
             
             // Build SSH command for -e option
-            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
+            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
             processStartInfo.ArgumentList.Add("-e");
             processStartInfo.ArgumentList.Add(sshCommand);
             
@@ -728,7 +728,7 @@ public class BackupPlanExecutor
             processStartInfo.ArgumentList.Add("--itemize-changes");
             processStartInfo.ArgumentList.Add("--stats");
 
-            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
+            var sshCommand = $"ssh -i \"{sshKeyPath}\" -p {agent.rsyncPort} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=\"{knownHostsPath}\"";
             processStartInfo.ArgumentList.Add("-e");
             processStartInfo.ArgumentList.Add(sshCommand);
 
@@ -1299,6 +1299,8 @@ public class BackupPlanExecutor
             processStartInfo.ArgumentList.Add(sshKeyPath);
             processStartInfo.ArgumentList.Add("-p");
             processStartInfo.ArgumentList.Add(agent.rsyncPort.ToString());
+            processStartInfo.ArgumentList.Add("-o");
+            processStartInfo.ArgumentList.Add("BatchMode=yes");
             processStartInfo.ArgumentList.Add("-o");
             processStartInfo.ArgumentList.Add("StrictHostKeyChecking=accept-new");
             processStartInfo.ArgumentList.Add("-o");

@@ -21,6 +21,24 @@ export function AddAgent() {
   const [success, setSuccess] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const sshKeyCommand = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
+touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \\
+rm -f ~/.ssh/remote_rsync_manager ~/.ssh/remote_rsync_manager.pub && \\
+sed -i '/remote_rsync_manager/d' ~/.ssh/authorized_keys && \\
+ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
+cat ~/.ssh/remote_rsync_manager.pub >> ~/.ssh/authorized_keys && \\
+cat ~/.ssh/remote_rsync_manager`
+
+  const handleCopyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(sshKeyCommand)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error("Failed to copy commands:", err)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
@@ -240,61 +258,57 @@ export function AddAgent() {
 
           {/* SSH Key Generation */}
           <div className="space-y-2">
-            <Label>Generate SSH Key</Label>
-            <div className="relative">
-              <pre className="flex items-start justify-between gap-4 rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
-                <code className="flex-1 whitespace-pre">
-{(() => {
-  const userAtHost = rsyncUser && hostname.trim()
-    ? `${rsyncUser.trim()}@${hostname.trim()}`
-    : hostname.trim()
-    ? hostname.trim()
-    : "user@remote-ip"
-  return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
-cat ~/.ssh/remote_rsync_manager`
-})()}
-                </code>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    const userAtHost = rsyncUser && hostname.trim()
-                      ? `${rsyncUser.trim()}@${hostname.trim()}`
-                      : hostname.trim()
-                      ? hostname.trim()
-                      : "user@remote-ip"
-                    const commands = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
-cat ~/.ssh/remote_rsync_manager`
-                    try {
-                      await navigator.clipboard.writeText(commands)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    } catch (err) {
-                      console.error("Failed to copy commands:", err)
-                    }
-                  }}
-                  className="shrink-0"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 mr-2" />
-                      Copy
-                    </>
-                  )}
-                </Button>
-              </pre>
+            <div className="flex items-center justify-between">
+              <Label>Generate SSH Key</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyCommand}
+                className="text-xs"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 mr-1 text-green-600 dark:text-green-400" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 mr-1" />
+                    Copy
+                  </>
+                )}
+              </Button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Use these commands to generate an SSH key pair and copy the public key to the remote server. Copy the command and paste into a terminal to generate the keys.
-            </p>
+            <pre className="rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
+              <code className="whitespace-pre">
+                {sshKeyCommand}
+              </code>
+            </pre>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
+              <p className="text-sm text-muted-foreground">
+                Run this command on the remote agent machine to generate an SSH key pair and register the public key.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopyCommand}
+                className="shrink-0 self-start sm:self-auto"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4 mr-2 text-green-600 dark:text-green-400" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy Command
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-4">

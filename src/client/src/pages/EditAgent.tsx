@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, RefreshCw, Trash2, Copy } from "lucide-react"
+import { ArrowLeft, RefreshCw, Trash2, Copy, Check } from "lucide-react"
 import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api"
 import {
   AlertDialog,
@@ -40,6 +40,25 @@ export function EditAgent() {
   const [error, setError] = useState<string | null>(null)
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [copiedCommand, setCopiedCommand] = useState(false)
+
+  const sshKeyCommand = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
+touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \\
+rm -f ~/.ssh/remote_rsync_manager ~/.ssh/remote_rsync_manager.pub && \\
+sed -i '/remote_rsync_manager/d' ~/.ssh/authorized_keys && \\
+ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
+cat ~/.ssh/remote_rsync_manager.pub >> ~/.ssh/authorized_keys && \\
+cat ~/.ssh/remote_rsync_manager`
+
+  const handleCopyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(sshKeyCommand)
+      setCopiedCommand(true)
+      setTimeout(() => setCopiedCommand(false), 2000)
+    } catch (err) {
+      console.error("Failed to copy commands:", err)
+    }
+  }
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -339,6 +358,61 @@ export function EditAgent() {
                 Key length: {rsyncSshKey.length} characters
               </p>
             )}
+          </div>
+
+          {/* SSH Key Generation / Renewal */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Generate / Renew SSH Key</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyCommand}
+                className="text-xs"
+              >
+                {copiedCommand ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 mr-1 text-green-600 dark:text-green-400" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 mr-1" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+            <pre className="rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto">
+              <code className="whitespace-pre">
+                {sshKeyCommand}
+              </code>
+            </pre>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
+              <p className="text-sm text-muted-foreground">
+                Run this command on the remote agent machine to generate or renew an SSH key pair. It will automatically clean old keys from this manager, register the new public key, and output the private key to paste above.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopyCommand}
+                className="shrink-0 self-start sm:self-auto"
+              >
+                {copiedCommand ? (
+                  <>
+                    <Check className="h-4 w-4 mr-2 text-green-600 dark:text-green-400" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy Command
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-4">
