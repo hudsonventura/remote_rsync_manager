@@ -250,10 +250,9 @@ export function AddAgent() {
     : hostname.trim()
     ? hostname.trim()
     : "user@remote-ip"
-  return `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
-mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
-cat ./${hostname.trim()}`
+  return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
+ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
+cat ~/.ssh/remote_rsync_manager`
 })()}
                 </code>
                 <Button
@@ -266,10 +265,9 @@ cat ./${hostname.trim()}`
                       : hostname.trim()
                       ? hostname.trim()
                       : "user@remote-ip"
-                    const commands = `cd /tmp/ && ssh-keygen -t ed25519 -f ./${hostname.trim()} -N "" && \\
-mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
-ssh-copy-id -i ./${hostname.trim()}.pub ${userAtHost}&& \\
-cat ./${hostname.trim()}`
+                    const commands = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && \\
+ssh-keygen -t ed25519 -C "remote_rsync_manager" -f ~/.ssh/remote_rsync_manager -N "" && \\
+cat ~/.ssh/remote_rsync_manager`
                     try {
                       await navigator.clipboard.writeText(commands)
                       setCopied(true)
