@@ -16,9 +16,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./data/:/app/data/
-      # Mount the file system you want to backup (adjust path as you need)
-      # Example: Mount specific directory instead of entire filesystem: /home/user/files:/host
-      - /path/your/files/:/host/
-      - /path/your/store/:/store/
+      # Mount the file system you want to backup, but use the file docker-compose-override.yml
+      # DO: cp docker-compose-override.example.yml docker-compose-override.yml
+      # Now edit the docker-compose-override.yml and put all of your diretories that you need
+
     
 
