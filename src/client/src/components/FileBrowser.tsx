@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { apiGet } from "@/lib/api"
-import { Folder, File, ArrowLeft, X } from "lucide-react"
+import { Folder, File, ArrowLeft, X, HardDrive, RefreshCw, FolderUp, CornerDownLeft } from "lucide-react"
 
 interface FileSystemItem {
   name: string
@@ -17,14 +17,17 @@ interface FileSystemItem {
 
 interface FileBrowserProps {
   agentId: string
+  agentName?: string
+  agentHostname?: string
   open: boolean
   onClose: () => void
   onSelect: (path: string) => void
   initialPath?: string
 }
 
-export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: FileBrowserProps) {
+export function FileBrowser({ agentId, agentName, agentHostname, open, onClose, onSelect, initialPath }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState("/")
+  const [inputPath, setInputPath] = useState("/")
   const [items, setItems] = useState<FileSystemItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,6 +46,7 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
         }
       }
       setCurrentPath(startPath)
+      setInputPath(startPath)
       setPathHistory([startPath])
       loadDirectory(startPath)
     }
@@ -58,11 +62,54 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
       )
       setItems(data)
       setCurrentPath(path)
+      setInputPath(path)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load directory")
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const getParentDirectory = (path: string): string => {
+    const trimmed = path.trim()
+    if (!trimmed || trimmed === "/" || trimmed === "\\") {
+      return "/"
+    }
+    const normalized = trimmed.replace(/[/\\]+$/, "")
+    if (!normalized) return "/"
+    const lastSlash = normalized.lastIndexOf("/")
+    const lastBackslash = normalized.lastIndexOf("\\")
+    const lastSep = Math.max(lastSlash, lastBackslash)
+    if (lastSep <= 0) return "/"
+    return normalized.substring(0, lastSep) || "/"
+  }
+
+  const isAtRoot = !currentPath || currentPath.trim() === "/" || currentPath.trim() === "\\" || currentPath.trim().replace(/[/\\]+$/, "") === ""
+
+  const handleGoBack = () => {
+    if (pathHistory.length > 1) {
+      const newHistory = pathHistory.slice(0, -1)
+      const previousPath = newHistory[newHistory.length - 1]
+      setPathHistory(newHistory)
+      loadDirectory(previousPath)
+    }
+  }
+
+  const handleGoUp = () => {
+    if (isAtRoot || isLoading) return
+    const parentPath = getParentDirectory(currentPath)
+    setPathHistory((prev) => [...prev, parentPath])
+    loadDirectory(parentPath)
+  }
+
+  const handleNavigateToInput = () => {
+    const target = inputPath.trim() || "/"
+    if (target === currentPath) {
+      loadDirectory(target)
+      return
+    }
+    setPathHistory((prev) => [...prev, target])
+    loadDirectory(target)
   }
 
   const handleItemClick = (item: FileSystemItem) => {
@@ -78,18 +125,10 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
     }
   }
 
-  const handleGoBack = () => {
-    if (pathHistory.length > 1) {
-      const newHistory = pathHistory.slice(0, -1)
-      const previousPath = newHistory[newHistory.length - 1]
-      setPathHistory(newHistory)
-      loadDirectory(previousPath)
-    }
-  }
-
   const handleSelectCurrentPath = () => {
     // When selecting a directory as the source, append trailing slash so rsync copies directory contents
-    const pathToSelect = currentPath ? (currentPath.endsWith("/") ? currentPath : `${currentPath}/`) : "/"
+    const rawPath = inputPath.trim() || currentPath || "/"
+    const pathToSelect = rawPath ? (rawPath.endsWith("/") ? rawPath : `${rawPath}/`) : "/"
     onSelect(pathToSelect)
     onClose()
   }
@@ -102,9 +141,36 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
         className="fixed inset-0 bg-black/80"
         onClick={onClose}
       />
-      <div className="relative z-50 w-full max-w-2xl max-h-[80vh] bg-background border rounded-lg shadow-lg flex flex-col">
+      <div
+        className="relative z-50 w-full max-w-2xl max-h-[80vh] bg-background border rounded-lg shadow-lg flex flex-col"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            onClose()
+          }
+          if (e.key === "Backspace" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault()
+          }
+        }}
+      >
         <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-xl font-semibold">Browse File System</h2>
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              <HardDrive className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold leading-none">Browse Agent File System</h2>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                  {agentName ? `Agent: ${agentName}` : "Agent (Source)"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {agentName
+                  ? `Browsing remote agent filesystem on ${agentName}${agentHostname ? ` (${agentHostname})` : ""} • Source`
+                  : "Browsing remote agent filesystem • Source"}
+              </p>
+            </div>
+          </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
@@ -112,26 +178,67 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
 
         <div className="flex items-center gap-2 p-4 border-b">
           <Button
+            type="button"
             variant="outline"
             size="sm"
             onClick={handleGoBack}
             disabled={pathHistory.length <= 1 || isLoading}
+            title="Go back in history"
           >
-            <ArrowLeft className="h-4 w-4 mr-2" />
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
             Back
           </Button>
-          <Input
-            value={currentPath}
-            readOnly
-            className="flex-1 font-mono text-sm"
-          />
           <Button
+            type="button"
             variant="outline"
             size="sm"
-            onClick={() => loadDirectory(currentPath)}
-            disabled={isLoading}
+            onClick={handleGoUp}
+            disabled={isAtRoot || isLoading}
+            title="Go to parent directory (Up)"
           >
-            Refresh
+            <FolderUp className="h-4 w-4 mr-1.5" />
+            Up
+          </Button>
+          <div className="flex-1 flex items-center relative">
+            <span className="absolute left-3 text-xs font-mono font-medium text-blue-600 dark:text-blue-400 select-none pointer-events-none">
+              agent:
+            </span>
+            <Input
+              value={inputPath}
+              onChange={(e) => setInputPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  handleNavigateToInput()
+                }
+              }}
+              className="pl-16 pr-8 font-mono text-sm"
+              placeholder="/path/to/directory"
+              disabled={isLoading}
+            />
+            {inputPath.trim() !== currentPath.trim() && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleNavigateToInput}
+                className="absolute right-1 h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                title="Navigate to path (Enter)"
+                disabled={isLoading}
+              >
+                <CornerDownLeft className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => loadDirectory(inputPath.trim() || currentPath)}
+            disabled={isLoading}
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </Button>
         </div>
 
@@ -144,11 +251,11 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
 
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">
-              Loading...
+              Loading agent directory...
             </div>
           ) : items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              This directory is empty
+              This directory is empty on the agent
             </div>
           ) : (
             <div className="space-y-1">
@@ -177,13 +284,18 @@ export function FileBrowser({ agentId, open, onClose, onSelect, initialPath }: F
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-4 border-t">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSelectCurrentPath}>
-            Select Current Path
-          </Button>
+        <div className="flex items-center justify-between p-4 border-t">
+          <span className="text-xs text-muted-foreground font-mono truncate max-w-[280px]">
+            agent:{currentPath}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleSelectCurrentPath}>
+              Select Agent Path
+            </Button>
+          </div>
         </div>
       </div>
     </div>

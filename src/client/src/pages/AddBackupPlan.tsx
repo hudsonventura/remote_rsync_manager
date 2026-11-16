@@ -203,14 +203,14 @@ export function AddBackupPlan() {
                   variant="outline"
                   onClick={() => setShowFileBrowser(true)}
                   disabled={isLoading}
-                  title="Browse file system on agent"
+                  title="Browse file system on agent (Source)"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               )}
             </div>
             <p className="text-sm text-muted-foreground">
-              Path to the files/directories to backup
+              Path to the files/directories to backup on the agent
             </p>
           </div>
 
@@ -232,7 +232,7 @@ export function AddBackupPlan() {
                 variant="outline"
                 onClick={() => setShowServerFileBrowser(true)}
                 disabled={isLoading}
-                title="Browse server file system"
+                title="Browse file system on server (Destination)"
               >
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -280,6 +280,8 @@ export function AddBackupPlan() {
       {agentId && (
         <FileBrowser
           agentId={agentId}
+          agentName={agent?.name}
+          agentHostname={agent?.hostname}
           open={showFileBrowser}
           onClose={() => setShowFileBrowser(false)}
           onSelect={(path) => {

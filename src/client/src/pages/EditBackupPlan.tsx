@@ -45,6 +45,7 @@ export function EditBackupPlan() {
   const agentIdFromQuery = searchParams.get("agentId")
   const agentId = agentIdFromPath || agentIdFromQuery || undefined
   const [agent, setAgent] = useState<Agent | null>(null)
+  const effectiveAgentId = agentId || agent?.id || undefined
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [schedule, setSchedule] = useState("0 0 * * *")
@@ -343,7 +344,7 @@ export function EditBackupPlan() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="source">Source Path  (Agent)</Label>
+            <Label htmlFor="source">Source Path (Agent)</Label>
             <div className="flex gap-2">
               <Input
                 id="source"
@@ -355,20 +356,20 @@ export function EditBackupPlan() {
                 disabled={isLoading}
                 className="flex-1"
               />
-              {agentId && (
+              {effectiveAgentId && (
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setShowFileBrowser(true)}
                   disabled={isLoading}
-                  title="Browse file system on agent"
+                  title="Browse file system on agent (Source)"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               )}
             </div>
             <p className="text-sm text-muted-foreground">
-              Path to the files/directories to backup
+              Path to the files/directories to backup on the agent
             </p>
           </div>
 
@@ -390,7 +391,7 @@ export function EditBackupPlan() {
                 variant="outline"
                 onClick={() => setShowServerFileBrowser(true)}
                 disabled={isLoading}
-                title="Browse server file system"
+                title="Browse file system on server (Destination)"
               >
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -505,9 +506,11 @@ export function EditBackupPlan() {
         </form>
       </div>
 
-      {agentId && (
+      {effectiveAgentId && (
         <FileBrowser
-          agentId={agentId}
+          agentId={effectiveAgentId}
+          agentName={agent?.name}
+          agentHostname={agent?.hostname}
           open={showFileBrowser}
           onClose={() => setShowFileBrowser(false)}
           onSelect={(path) => {

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { apiGet, apiPost } from "@/lib/api"
-import { Folder, File, ArrowLeft, X, FolderPlus, RefreshCw } from "lucide-react"
+import { Folder, File, ArrowLeft, X, FolderPlus, RefreshCw, Server, FolderUp, CornerDownLeft } from "lucide-react"
 
 interface FileSystemItem {
   name: string
@@ -24,6 +24,7 @@ interface ServerFileBrowserProps {
 
 export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: ServerFileBrowserProps) {
   const [currentPath, setCurrentPath] = useState("")
+  const [inputPath, setInputPath] = useState("")
   const [items, setItems] = useState<FileSystemItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +50,7 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
         }
       }
       setCurrentPath(startPath)
+      setInputPath(startPath)
       setPathHistory([startPath])
       loadDirectory(startPath)
     }
@@ -71,12 +73,29 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
         displayPath = data[0].path
       }
       setCurrentPath(displayPath)
+      setInputPath(displayPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load directory")
     } finally {
       setIsLoading(false)
     }
   }
+
+  const getParentDirectory = (path: string): string => {
+    const trimmed = path.trim()
+    if (!trimmed || trimmed === "/" || trimmed === "\\") {
+      return "/"
+    }
+    const normalized = trimmed.replace(/[/\\]+$/, "")
+    if (!normalized) return "/"
+    const lastSlash = normalized.lastIndexOf("/")
+    const lastBackslash = normalized.lastIndexOf("\\")
+    const lastSep = Math.max(lastSlash, lastBackslash)
+    if (lastSep <= 0) return "/"
+    return normalized.substring(0, lastSep) || "/"
+  }
+
+  const isAtRoot = !currentPath || currentPath.trim() === "/" || currentPath.trim() === "\\" || currentPath.trim().replace(/[/\\]+$/, "") === ""
 
   const handleItemClick = (item: FileSystemItem) => {
     if (item.type === "directory") {
@@ -100,8 +119,25 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
     }
   }
 
+  const handleGoUp = () => {
+    if (isAtRoot || isLoading) return
+    const parent = getParentDirectory(currentPath)
+    setPathHistory((prev) => [...prev, parent])
+    loadDirectory(parent)
+  }
+
+  const handleNavigateToInput = () => {
+    const target = inputPath.trim() || "/"
+    if (target === currentPath) {
+      loadDirectory(target)
+      return
+    }
+    setPathHistory((prev) => [...prev, target])
+    loadDirectory(target)
+  }
+
   const handleSelectCurrentPath = () => {
-    const pathToSelect = currentPath || "/"
+    const pathToSelect = inputPath.trim() || currentPath || "/"
     onSelect(pathToSelect)
     onClose()
   }
@@ -133,8 +169,8 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
 
       // Reload directory list to show the new folder
       await loadDirectory(currentPath)
-    } catch (err: any) {
-      setCreateDirError(err instanceof Error ? err.message : (err?.message || "Failed to create directory"))
+    } catch (err: unknown) {
+      setCreateDirError(err instanceof Error ? err.message : String((err as { message?: string })?.message || "Failed to create directory"))
     } finally {
       setIsSubmittingDir(false)
     }
@@ -148,9 +184,34 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
         className="fixed inset-0 bg-black/80"
         onClick={onClose}
       />
-      <div className="relative z-50 w-full max-w-2xl max-h-[80vh] bg-background border rounded-lg shadow-lg flex flex-col">
+      <div
+        className="relative z-50 w-full max-w-2xl max-h-[80vh] bg-background border rounded-lg shadow-lg flex flex-col"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            onClose()
+          }
+          if (e.key === "Backspace" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault()
+          }
+        }}
+      >
         <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-xl font-semibold">Browse Server File System</h2>
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <Server className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold leading-none">Browse Server File System</h2>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                  Server (Destination)
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Browsing local server filesystem for backup storage • Destination
+              </p>
+            </div>
+          </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
@@ -158,20 +219,60 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
 
         <div className="flex items-center gap-2 p-4 border-b">
           <Button
+            type="button"
             variant="outline"
             size="sm"
             onClick={handleGoBack}
             disabled={pathHistory.length <= 1 || isLoading}
+            title="Go back in history"
           >
-            <ArrowLeft className="h-4 w-4 mr-2" />
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
             Back
           </Button>
-          <Input
-            value={currentPath || "/"}
-            readOnly
-            className="flex-1 font-mono text-sm"
-          />
           <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleGoUp}
+            disabled={isAtRoot || isLoading}
+            title="Go to parent directory (Up)"
+          >
+            <FolderUp className="h-4 w-4 mr-1.5" />
+            Up
+          </Button>
+          <div className="flex-1 flex items-center relative">
+            <span className="absolute left-3 text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 select-none pointer-events-none">
+              server:
+            </span>
+            <Input
+              value={inputPath}
+              onChange={(e) => setInputPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  handleNavigateToInput()
+                }
+              }}
+              className="pl-16 pr-8 font-mono text-sm"
+              placeholder="/path/to/directory"
+              disabled={isLoading}
+            />
+            {inputPath.trim() !== currentPath.trim() && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleNavigateToInput}
+                className="absolute right-1 h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                title="Navigate to path (Enter)"
+                disabled={isLoading}
+              >
+                <CornerDownLeft className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+          <Button
+            type="button"
             variant="outline"
             size="sm"
             onClick={() => {
@@ -185,9 +286,10 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
             New Folder
           </Button>
           <Button
+            type="button"
             variant="outline"
             size="sm"
-            onClick={() => loadDirectory(currentPath)}
+            onClick={() => loadDirectory(inputPath.trim() || currentPath)}
             disabled={isLoading}
             title="Refresh"
           >
@@ -257,11 +359,11 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
 
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">
-              Loading...
+              Loading server directory...
             </div>
           ) : items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              This directory is empty
+              This directory is empty on the server
             </div>
           ) : (
             <div className="space-y-1">
@@ -290,13 +392,18 @@ export function ServerFileBrowser({ open, onClose, onSelect, initialPath }: Serv
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-4 border-t">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSelectCurrentPath}>
-            Select Current Path
-          </Button>
+        <div className="flex items-center justify-between p-4 border-t">
+          <span className="text-xs text-muted-foreground font-mono truncate max-w-[280px]">
+            server:{currentPath || "/"}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleSelectCurrentPath}>
+              Select Server Path
+            </Button>
+          </div>
         </div>
       </div>
     </div>
