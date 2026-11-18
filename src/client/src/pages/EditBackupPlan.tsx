@@ -338,7 +338,7 @@ export function EditBackupPlan() {
               disabled={isLoading}
             />
             <p className="text-sm text-muted-foreground">
-              Cron expression (e.g., "0 0 * * *" for daily at midnight)
+              Cron expression in UTC (e.g., "0 0 * * *" for daily at midnight UTC)
             </p>
             <CronDescription cronExpression={schedule} />
           </div>

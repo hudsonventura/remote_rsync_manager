@@ -16,6 +16,7 @@ This system centralizes backups using Rsync from multiple sources (agents). Itâ€
 - Detailed logging with filtering and sorting capabilities
 - File system browsing for both remote agents and local server
 - Active/inactive backup plan management
+- Configuration Backup & Restore (JSON export and merge with conflict resolution)
 
 
 
@@ -199,6 +200,14 @@ Once you're satisfied with the simulation results, you can execute the backup:
 
 
 
+
+### Configuration Backup & Restore (Export / Import)
+
+Administrators can export and import the entire system configuration from the **Backup & Restore** menu in the sidebar:
+- **Export Format:** Saves a JSON file named `RemoteRSyncManager-yyyy-mm-dd-hh-mi-ss.json` containing all Users (credentials & settings), Agents (connection details & private SSH keys), and Backup Plans. High-volume logs and extensions are excluded.
+- **Merge & Conflict Resolution:** When importing, the system analyzes the file and detects collisions against existing records. An interactive wizard allows you to choose whether to keep existing records, overwrite them, create new ones, or skip them.
+- **Agent Plan Re-assignment:** If an existing agent is preserved during conflict resolution, you can choose which local agent should own the imported backup plans.
+- **Rule for Future Features:** Whenever new configuration entities or settings are introduced in the codebase, they must also be integrated into the Backup & Restore export and import pipeline.
 
 ### Database
 

@@ -19,6 +19,7 @@ import { ExtensionsList } from "@/pages/ExtensionsList"
 import { AddExtension } from "@/pages/AddExtension"
 import { EditExtension } from "@/pages/EditExtension"
 import { ExtensionLogs } from "@/pages/ExtensionLogs"
+import { BackupRestore } from "@/pages/BackupRestore"
 
 function App() {
   return (
@@ -46,6 +47,7 @@ function App() {
           <Route path="/logs/:executionId" element={<AllLogs />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/backup-restore" element={<BackupRestore />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/about" element={<About />} />
         </Route>

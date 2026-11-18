@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Settings, User, LayoutDashboard, Server, Database, Info, Users, FileText, Blocks } from "lucide-react"
+import { Settings, User, LayoutDashboard, Server, Database, Info, Users, FileText, Blocks, Archive } from "lucide-react"
 import { useEffect, useState } from "react"
 import { apiGet } from "@/lib/api"
 
@@ -21,6 +21,7 @@ const navigation = [
 
 const adminNavigation = [
   { name: "Users", href: "/users", icon: Users },
+  { name: "Backup & Restore", href: "/backup-restore", icon: Archive },
 ]
 
 export function Sidebar() {

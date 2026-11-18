@@ -1,12 +1,41 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toString } from "cronstrue"
 import CronExpressionParser from "cron-parser"
 
 interface CronDescriptionProps {
   cronExpression: string
+  timezone?: string
 }
 
-export function CronDescription({ cronExpression }: CronDescriptionProps) {
+export function CronDescription({ cronExpression, timezone: propTimezone }: CronDescriptionProps) {
+  const [selectedTimezone, setSelectedTimezone] = useState<string>(() => {
+    if (propTimezone) return propTimezone
+    return sessionStorage.getItem("selectedTimezone") || "UTC"
+  })
+
+  useEffect(() => {
+    if (propTimezone) {
+      setSelectedTimezone(propTimezone)
+      return
+    }
+
+    const handleTimezoneChange = (event: CustomEvent<string>) => {
+      const newTimezone = event.detail || "UTC"
+      setSelectedTimezone(newTimezone)
+    }
+
+    window.addEventListener("timezoneChanged", handleTimezoneChange as EventListener)
+
+    const saved = sessionStorage.getItem("selectedTimezone")
+    if (saved && saved !== selectedTimezone) {
+      setSelectedTimezone(saved)
+    }
+
+    return () => {
+      window.removeEventListener("timezoneChanged", handleTimezoneChange as EventListener)
+    }
+  }, [propTimezone, selectedTimezone])
+
   const { description, nextExecution, isValid } = useMemo(() => {
     if (!cronExpression || cronExpression.trim() === "") {
       return { description: null, nextExecution: null, isValid: true }
@@ -60,7 +89,7 @@ export function CronDescription({ cronExpression }: CronDescriptionProps) {
         nextExecution: nextExec,
         isValid: isValidCron 
       }
-    } catch (error) {
+    } catch {
       return { 
         description: "Invalid cron expression", 
         nextExecution: null,
@@ -82,21 +111,6 @@ export function CronDescription({ cronExpression }: CronDescriptionProps) {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
     
-    // Format date and time in 24-hour format in UTC
-    const dateStr = date.toLocaleDateString('en-US', { 
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      timeZone: 'UTC'
-    })
-    const timeStr = date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    })
-    
     let relativeTime: string
     if (diffMins < 1) {
       relativeTime = "in less than a minute"
@@ -107,53 +121,106 @@ export function CronDescription({ cronExpression }: CronDescriptionProps) {
     } else if (diffDays < 7) {
       relativeTime = `in ${diffDays} day${diffDays !== 1 ? 's' : ''}`
     } else {
-      relativeTime = `on ${dateStr} at ${timeStr} UTC`
+      relativeTime = `in ${diffDays} days`
     }
     
     return relativeTime
   }
   
-  const formatFullDateTime = (date: Date | null) => {
+  const formatFullDateTime = (date: Date | null, tz: string = "UTC", includeOffset: boolean = false) => {
     if (!date) return null
     
-    // Format date and time in 24-hour format in UTC
-    const dateStr = date.toLocaleDateString('en-US', { 
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      timeZone: 'UTC'
-    })
-    const timeStr = date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    })
-    
-    return `${dateStr} ${timeStr} UTC`
+    try {
+      // Format date and time in 24-hour format
+      const dateStr = date.toLocaleDateString('en-US', { 
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: tz
+      })
+      const timeStr = date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZone: tz
+      })
+      
+      if (includeOffset && tz !== "UTC") {
+        try {
+          const offsetFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            timeZoneName: 'short'
+          })
+          const parts = offsetFormatter.formatToParts(date)
+          const tzName = parts.find(p => p.type === 'timeZoneName')?.value || ''
+          if (tzName) {
+            return `${dateStr} ${timeStr} (${tzName})`
+          }
+        } catch {
+          // Ignore offset formatting error
+        }
+      }
+      
+      return `${dateStr} ${timeStr}`
+    } catch {
+      // Fallback to UTC if timezone is invalid
+      const dateStr = date.toLocaleDateString('en-US', { 
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: 'UTC'
+      })
+      const timeStr = date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZone: 'UTC'
+      })
+      return `${dateStr} ${timeStr}`
+    }
   }
 
+  const hasConfiguredTimezone = Boolean(selectedTimezone && selectedTimezone !== "UTC")
+
   return (
-    <div className={`rounded-md p-2 text-sm space-y-1 ${
+    <div className={`rounded-md p-2 text-sm space-y-1.5 ${
       isValid 
         ? "bg-muted/50 text-foreground" 
         : "bg-destructive/15 text-destructive"
     }`}>
       <div>
-        <span className="font-medium">Schedule: </span>
+        <span className="font-medium">Schedule (UTC): </span>
         <span>{description}</span>
       </div>
       {isValid && nextExecution && (
-        <div className="text-xs text-muted-foreground">
-          <span className="font-medium">Next execution: </span>
-          <span>{formatNextExecution(nextExecution)}</span>
-          <span className="ml-1">
-            ({formatFullDateTime(nextExecution)})
-          </span>
+        <div className="text-xs text-muted-foreground space-y-1">
+          <div>
+            <span className="font-medium">Next execution: </span>
+            <span>{formatNextExecution(nextExecution)}</span>
+            {!hasConfiguredTimezone && (
+              <span className="ml-1">
+                ({formatFullDateTime(nextExecution, "UTC")} UTC)
+              </span>
+            )}
+          </div>
+          {hasConfiguredTimezone && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="inline-flex items-center gap-1 rounded bg-background/80 border border-border/50 px-1.5 py-0.5">
+                <span className="font-semibold text-foreground/90">UTC:</span>
+                <span>{formatFullDateTime(nextExecution, "UTC")}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 rounded bg-background/80 border border-border/50 px-1.5 py-0.5">
+                <span className="font-semibold text-foreground/90" title={selectedTimezone}>
+                  {selectedTimezone}:
+                </span>
+                <span>{formatFullDateTime(nextExecution, selectedTimezone, true)}</span>
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
-

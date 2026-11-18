@@ -134,6 +134,25 @@ A modern web-based graphical interface and orchestrator for centralizing remote 
 - `ExtensionExecutor` spawns the target command (e.g. `dotnet App.dll`), captures exit code and stdout/stderr output.
 - Full execution records and output logs are persisted to `LogDbContext` (`logs.db`).
 
+### E. Configuration Backup & Restore (Export / Import)
+- **Primary Objective:** Provide automated backup and migration of core system configurations without including high-volume logs or extensions.
+- **Scope:**
+  - `User` entities (credentials, roles, preferences, timezones).
+  - `Agent` entities (hostnames, ports, tokens, and SSH private keys).
+  - `BackupPlan` entities (schedules, paths, settings, and agent associations).
+  - High-volume logs (`LogDbContext`) and extensions (`Extension`) are strictly excluded.
+- **Export Format:**
+  - Filename standard: `RemoteRSyncManager-yyyy-mm-dd-hh-mi-ss.json` (e.g., `RemoteRSyncManager-2026-11-18-16-30-45.json`).
+- **Import & Merge Architecture (`BackupRestoreController`):**
+  - Evaluates conflict detection via `POST /api/backup-restore/preview` before modifying any data.
+  - Interactive user conflict choices:
+    - `keep_existing`: Preserves the local record.
+    - `overwrite`: Updates local properties with the imported record.
+    - `create_new`: Assigns a new GUID and registers as a separate record.
+    - `skip`: Omits the item.
+  - **Plan Re-association:** When an existing agent is preserved during conflict resolution, the system prompts for the target agent to which imported backup plans should be linked.
+  - Merge execution is wrapped in an atomic EF Core transaction (`BeginTransactionAsync`).
+
 ---
 
 ## 5. Build, Test, and Run Commands
@@ -225,4 +244,6 @@ A modern web-based graphical interface and orchestrator for centralizing remote 
 5. **Always Verify Builds:**
    - After modifying C# files, run `XDG_RUNTIME_DIR=/tmp dotnet build src/server/server.csproj` to confirm compilation.
    - After modifying React files, run `npm --prefix src/client run build` to confirm TypeScript compilation.
+6. **Mandatory Configuration Backup Integration (Export / Import):**
+   - Whenever new entities, configuration settings, or parameters are added to the application from now on, developers and AI agents **MUST** also update `BackupRestoreController.cs` and `BackupRestoreModels.cs` (and the frontend `BackupRestore.tsx` if applicable) to ensure the new data is fully covered in the export and import/merge pipeline.
 
